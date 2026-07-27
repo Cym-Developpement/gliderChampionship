@@ -30,7 +30,13 @@ class IgcValidationController extends Controller
             ->flip()
             ->toArray();
 
-        return view('admin.days.igc', compact('day', 'pilot', 'comp', 'turnpoints', 'flarmIds'));
+        // Heure de validation en vol, pour la confronter à celle de la trace.
+        $flarmTimes = PilotTurnpoint::where('pilot_id', $pilot->id)
+            ->where('competition_day_id', $day->id)
+            ->pluck('validated_at', 'turnpoint_id')
+            ->toArray();
+
+        return view('admin.days.igc', compact('day', 'pilot', 'comp', 'turnpoints', 'flarmIds', 'flarmTimes'));
     }
 
     public function process(Request $request, CompetitionDay $day, Pilot $pilot)
@@ -74,6 +80,12 @@ class IgcValidationController extends Controller
             ->where('competition_day_id', $day->id)
             ->pluck('turnpoint_id')
             ->flip()
+            ->toArray();
+
+        // Heure de validation en vol, pour la confronter à celle de la trace.
+        $flarmTimes = PilotTurnpoint::where('pilot_id', $pilot->id)
+            ->where('competition_day_id', $day->id)
+            ->pluck('validated_at', 'turnpoint_id')
             ->toArray();
 
         // Points tels qu'ils seront comptés : même service que le classement,
@@ -123,7 +135,7 @@ class IgcValidationController extends Controller
         }
 
         return view('admin.days.igc', compact(
-            'day', 'pilot', 'comp', 'turnpoints', 'flarmIds',
+            'day', 'pilot', 'comp', 'turnpoints', 'flarmIds', 'flarmTimes',
             'results', 'fixCount', 'maxSpeedKmh', 'maxAltM', 'maxGnssM', 'altitudes'
         ));
     }

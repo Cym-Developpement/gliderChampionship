@@ -46,6 +46,7 @@
                     <th>Points</th>
                     <th>Rayon</th>
                     <th class="text-center">FLARM</th>
+                    <th class="text-center" title="Heure de validation en vol">Heure</th>
                 </tr>
             </thead>
             <tbody>
@@ -58,6 +59,13 @@
                     <td class="text-center">
                         @if(isset($flarmIds[$tp->id]))
                             <span class="badge bg-success">✓ Validé</span>
+                        @else
+                            <span class="text-muted">–</span>
+                        @endif
+                    </td>
+                    <td class="text-center font-monospace small">
+                        @if(!empty($flarmTimes[$tp->id]))
+                            {{ \Carbon\Carbon::parse($flarmTimes[$tp->id])->format('H:i:s') }}
                         @else
                             <span class="text-muted">–</span>
                         @endif
@@ -185,6 +193,11 @@
                         <td class="text-center">
                             @if($flarmOk)
                                 <span class="badge bg-success">✓</span>
+                                @if(!empty($flarmTimes[$tp->id]))
+                                    <span class="d-block text-muted font-monospace" style="font-size:.75rem">
+                                        {{ \Carbon\Carbon::parse($flarmTimes[$tp->id])->format('H:i:s') }}
+                                    </span>
+                                @endif
                             @else
                                 <span class="text-muted">–</span>
                             @endif
