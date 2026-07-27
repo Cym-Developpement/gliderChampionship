@@ -98,19 +98,29 @@ class ApiController extends Controller
         // OGN à la mauvaise immatriculation.
         $activeDay = $comp?->activeDay();
 
+        // Un pilote sans planeur ne vole pas : il n'a ni position OGN ni score
+        // possible, et n'encombre donc pas la vue live. Le repli sur
+        // l'association globale s'applique d'abord — n'est écarté que celui qui
+        // n'a aucun planeur, ni pour le jour ni pour la compétition.
         $list = $pilots->map(function ($p) use ($activeDay, $comp) {
             /** @var \App\Models\Participant|null $linked */
             $linked = $p->participantForDay($activeDay, $comp?->id);
+
+            if (!$linked) {
+                return null;
+            }
+
             return [
                 'id' => $p->id,
                 'name' => $p->name,
                 'callsign' => $p->callsign,
                 'photoUrl' => $p->photo_url,
-                'reg' => $linked?->reg,
-                'gliderBrand' => $linked?->glider_brand,
-                'gliderModel' => $linked?->glider_model,
+                'reg' => $linked->reg,
+                'gliderBrand' => $linked->glider_brand,
+                'gliderModel' => $linked->glider_model,
             ];
-        });
+        })->filter()->values();
+
         return response()->json(['pilots' => $list]);
     }
 
