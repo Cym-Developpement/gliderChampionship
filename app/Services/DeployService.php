@@ -56,10 +56,22 @@ class DeployService
     {
         $branch = (string) config('services.github.deploy_branch', 'main');
 
+        // 0. Capacités de l'hébergement — première chose à vérifier en cas d'échec
+        foreach ($this->environment() as $label => $value) {
+            $this->line($label . ' : ' . $value);
+        }
+        $this->line('');
+
+        if (!$this->commandsAvailable()) {
+            $this->line('ÉCHEC : proc_open() est désactivée sur cet hébergement (directive disable_functions).');
+            $this->line('Le déploiement automatique ne peut pas lancer git. Passez par GitHub Actions en FTP/SSH.');
+            return false;
+        }
+
         // 1. Récupération du code
         $git = $this->findBinary(['git', '/usr/bin/git', '/usr/local/bin/git', '/bin/git']);
         if ($git === null) {
-            $this->line('ÉCHEC : binaire git introuvable ou proc_open() désactivée.');
+            $this->line('ÉCHEC : binaire git introuvable dans le PATH ni aux emplacements usuels.');
             return false;
         }
 
@@ -304,6 +316,36 @@ class DeployService
     }
 
     // ─── Utilitaires ─────────────────────────────────────────────────────────
+
+    /** proc_open() est fréquemment désactivée en mutualisé. */
+    public function commandsAvailable(): bool
+    {
+        $disabled = array_map('trim', explode(',', (string) ini_get('disable_functions')));
+
+        return function_exists('proc_open') && !in_array('proc_open', $disabled, true);
+    }
+
+    /**
+     * Capacités de l'hébergement, pour comprendre un échec sans accès SSH.
+     *
+     * @return array<string, string>
+     */
+    public function environment(): array
+    {
+        $commands = $this->commandsAvailable();
+
+        return [
+            'proc_open'  => $commands ? 'autorisée' : 'DÉSACTIVÉE',
+            'répertoire' => base_path(),
+            'dépôt git'  => is_dir(base_path('.git')) ? 'présent' : 'absent',
+            'git'        => $commands
+                ? ($this->findBinary(['git', '/usr/bin/git', '/usr/local/bin/git', '/bin/git']) ?? 'INTROUVABLE')
+                : 'non testable',
+            'php CLI'    => $commands ? ($this->phpBinary() ?? 'INTROUVABLE') : 'non testable',
+            'PATH'       => getenv('PATH') ?: '(vide)',
+            'branche'    => (string) config('services.github.deploy_branch', 'main'),
+        ];
+    }
 
     /** @return resource|null */
     private function acquireLock()

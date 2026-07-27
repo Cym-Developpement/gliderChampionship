@@ -66,6 +66,20 @@ class GithubWebhookController extends Controller
         // répertoire n'est pas encore un dépôt git.
         $cloneUrl = (string) $request->input('repository.clone_url', '');
 
+        // Mode diagnostic : ?sync=1 exécute le déploiement immédiatement et
+        // renvoie le journal complet. GitHub n'envoie jamais ce paramètre, sa
+        // livraison conserve donc sa réponse immédiate.
+        if ($request->boolean('sync')) {
+            $result = $deployer->run($cloneUrl !== '' ? $cloneUrl : null);
+
+            return response()->json([
+                'ok'          => $result['ok'],
+                'branch'      => $branch,
+                'environment' => $deployer->environment(),
+                'log'         => explode(PHP_EOL, $result['log']),
+            ], $result['ok'] ? 200 : 500, [], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
+        }
+
         dispatch(function () use ($deployer, $cloneUrl) {
             @ignore_user_abort(true);
             @set_time_limit(0);
