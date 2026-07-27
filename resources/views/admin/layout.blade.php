@@ -42,6 +42,9 @@
                     <li class="nav-item">
                         <a class="nav-link {{ request()->routeIs('admin.cache.*') ? 'active' : '' }}" href="{{ route('admin.cache.index') }}">Caches</a>
                     </li>
+                    <li class="nav-item">
+                        <a class="nav-link {{ request()->routeIs('admin.migrations.*') ? 'active' : '' }}" href="{{ route('admin.migrations.index') }}">Migrations</a>
+                    </li>
                 </ul>
                 <a href="/" target="_blank" class="btn btn-outline-info btn-sm me-2">Vue live</a>
                 <form action="{{ route('admin.logout') }}" method="POST" class="d-inline">

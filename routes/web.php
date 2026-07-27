@@ -6,6 +6,7 @@ use App\Http\Controllers\Admin\CompetitionController;
 use App\Http\Controllers\Admin\CompetitionDayController;
 use App\Http\Controllers\Admin\DashboardController;
 use App\Http\Controllers\Admin\IgcValidationController;
+use App\Http\Controllers\Admin\MigrationController;
 use App\Http\Controllers\Admin\OgnAssignController;
 use App\Http\Controllers\Admin\ParticipantController;
 use App\Http\Controllers\Admin\PilotController;
@@ -68,6 +69,9 @@ Route::prefix('admin')->middleware('auth')->group(function () {
     Route::get('cache', [CacheController::class, 'index'])->name('admin.cache.index');
     Route::post('cache/clear', [CacheController::class, 'clear'])->name('admin.cache.clear');
     Route::post('cache/rebuild', [CacheController::class, 'rebuild'])->name('admin.cache.rebuild');
+
+    Route::get('migrations', [MigrationController::class, 'index'])->name('admin.migrations.index');
+    Route::post('migrations/run', [MigrationController::class, 'run'])->name('admin.migrations.run');
 
     Route::get('ogn-assign', [OgnAssignController::class, 'index'])->name('admin.ogn-assign.index');
     Route::post('ogn-assign', [OgnAssignController::class, 'store'])->name('admin.ogn-assign.store');
