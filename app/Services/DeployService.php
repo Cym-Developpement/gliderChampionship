@@ -155,7 +155,11 @@ class DeployService
         $this->line('Répertoire non versionné — initialisation du dépôt.');
 
         foreach ([
-            [$git, 'init', '-b', $branch],
+            // « git init -b » exige git 2.28 ; les hébergements mutualisés en
+            // embarquent souvent une version plus ancienne. symbolic-ref est
+            // de la plomberie disponible partout et ne touche pas aux fichiers.
+            [$git, 'init'],
+            [$git, 'symbolic-ref', 'HEAD', 'refs/heads/' . $branch],
             [$git, 'remote', 'add', 'origin', $url],
             [$git, 'fetch', 'origin', $branch],
         ] as $command) {
@@ -210,7 +214,9 @@ class DeployService
     /** Ajoute le remote origin s'il manque à un dépôt existant. */
     private function ensureOrigin(string $git): bool
     {
-        $remote = $this->exec([$git, 'remote', 'get-url', 'origin'], 30);
+        // « git remote get-url » n'existe que depuis git 2.7 : on interroge la
+        // configuration, ce qui fonctionne quelle que soit la version.
+        $remote = $this->exec([$git, 'config', '--get', 'remote.origin.url'], 30);
         if ($remote['code'] === 0 && trim($remote['output']) !== '') {
             return true;
         }
