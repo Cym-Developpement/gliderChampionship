@@ -324,8 +324,9 @@
 </div>
 
 <script>
-const GENERAL_RANKING_URL = '/api/general-ranking';
-const COMPETITION_URL     = '/api/competition';
+const BASE = @json(rtrim(url('/'), '/'));
+const GENERAL_RANKING_URL = BASE + '/api/general-ranking';
+const COMPETITION_URL     = BASE + '/api/competition';
 
 // SVG médaille : simple rond coloré avec photo du pilote
 function medalSvg(rank) {

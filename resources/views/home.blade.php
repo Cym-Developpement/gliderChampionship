@@ -71,17 +71,20 @@ let mapRadiusKm = null;  // override du rayon (km), null = utilise competition.j
 let mapZoom = null;       // override du zoom, null = auto via fitBounds
 
 // Configuration des endpoints API (DB)
-const PARTICIPANTS_URL = '/api/participants';
-const COMPETITION_URL = '/api/competition';
-const PILOTS_URL = '/api/pilots';
-const LIVE_PILOTS_URL = '/api/live-pilots';
-const GENERAL_RANKING_URL = '/api/general-ranking';
-const TURNPOINTS_URL = '/api/turnpoints';
-const SETTINGS_URL = '/api/settings';
+// L'application peut être servie dans un sous-répertoire : toutes les URL
+// sont préfixées par la base calculée par Laravel plutôt que par « / ».
+const BASE = @json(rtrim(url('/'), '/'));
+const PARTICIPANTS_URL = BASE + '/api/participants';
+const COMPETITION_URL = BASE + '/api/competition';
+const PILOTS_URL = BASE + '/api/pilots';
+const LIVE_PILOTS_URL = BASE + '/api/live-pilots';
+const GENERAL_RANKING_URL = BASE + '/api/general-ranking';
+const TURNPOINTS_URL = BASE + '/api/turnpoints';
+const SETTINGS_URL = BASE + '/api/settings';
 
 // Carte Leaflet
 const map = L.map('map', { zoomControl: false, scrollWheelZoom: false, dragging: false });
-const tileLayer = L.tileLayer('/tiles/osm/{z}/{x}/{y}.png', {
+const tileLayer = L.tileLayer(BASE + '/tiles/osm/{z}/{x}/{y}.png', {
     maxZoom: 19,
     attribution: '&copy; OpenStreetMap contributors'
 });
@@ -93,7 +96,7 @@ tileLayer.addTo(map);
 const OPENAIP_API_KEY = document.querySelector('meta[name="openaip-key"]')?.content || '';
 let openAipLayer = null;
 if (OPENAIP_API_KEY) {
-    openAipLayer = L.tileLayer('/tiles/openaip/{z}/{x}/{y}.png', {
+    openAipLayer = L.tileLayer(BASE + '/tiles/openaip/{z}/{x}/{y}.png', {
         opacity: 0.6,
         maxZoom: 19,
         attribution: 'Map data &copy; OpenAIP'
@@ -238,7 +241,7 @@ function updateProximityAlerts() {
                             if (dist <= PROXIMITY_NEAR_M && tp.id != null) {
                                 const pairKey = `${pilotId}_${tp.id}`;
                                 validatedPairs.add(pairKey);
-                                fetch('/api/validate-turnpoint', {
+                                fetch(BASE + '/api/validate-turnpoint', {
                                     method: 'POST',
                                     headers: {
                                         'Content-Type': 'application/json',
@@ -293,7 +296,7 @@ function upsertMarker(p) {
         if (devMode) {
             marker.on('dragend', function(e) {
                 const ll = e.target.getLatLng();
-                fetch('/api/dev/positions', {
+                fetch(BASE + '/api/dev/positions', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': '{{ csrf_token() }}' },
                     body: JSON.stringify({ participant_id: key, lat: ll.lat, lng: ll.lng })
@@ -514,7 +517,7 @@ async function loadOgnPositions() {
         return;
     }
     const q = getBoundsQuery();
-    const url = `/positions?a=0&b=${q.b}&c=${q.c}&d=${q.d}&e=${q.e}&z=${q.z}`;
+    const url = `${BASE}/positions?a=0&b=${q.b}&c=${q.c}&d=${q.d}&e=${q.e}&z=${q.z}`;
     const res = await fetch(url, { cache: 'no-store' });
     if (!res.ok) return;
     const data = await res.json();
@@ -573,7 +576,7 @@ async function loadOgnPositions() {
 
 async function loadValidatedTurnpoints() {
     try {
-        const res = await fetch('/api/validated-turnpoints', { cache: 'no-store' });
+        const res = await fetch(BASE + '/api/validated-turnpoints', { cache: 'no-store' });
         if (!res.ok) return;
         const data = await res.json();
         const pairs = data.validated || [];

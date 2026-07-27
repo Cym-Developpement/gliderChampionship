@@ -337,6 +337,9 @@
 </div>
 
 <script>
+// L'application peut être servie dans un sous-répertoire : les URL sont
+// préfixées par la base calculée par Laravel plutôt que par « / ».
+const BASE = @json(rtrim(url('/'), '/'));
 // SVG médaille selon rang
 function medalSvg(rank) {
     const sizes  = { 1: 160, 2: 130, 3: 105 };
@@ -373,14 +376,14 @@ function setPhoto(rank, url) {
 
 async function loadPodium() {
     try {
-        const res = await fetch('/api/competition', { cache: 'no-store' });
+        const res = await fetch(BASE + '/api/competition', { cache: 'no-store' });
         if (res.ok) {
             const cfg = await res.json();
             if (cfg?.name) document.getElementById('compName').textContent = cfg.name;
         }
     } catch {}
 
-    const res = await fetch('/api/general-ranking', { cache: 'no-store' });
+    const res = await fetch(BASE + '/api/general-ranking', { cache: 'no-store' });
     if (!res.ok) return;
     const data = await res.json();
 
