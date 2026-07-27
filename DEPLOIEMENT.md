@@ -51,21 +51,35 @@ composer install --no-dev --optimize-autoloader
 
 ## 2 bis. Installation assistée par navigateur (alternative aux §3 à §6)
 
-Le fichier `public/install.php` effectue en une passe tout ce que décrivent les sections 3 à 6 : vérification des prérequis, écriture du `.env` (avec `APP_KEY` générée et `APP_DEBUG=false`), test de connexion à la base, migrations, création du compte administrateur, lien `public/storage`, création des répertoires de stockage et caches de production.
+Le fichier `public/install.php` effectue en une passe tout ce que décrivent les sections 3 à 6, y compris l'installation des dépendances : **Composer n'a pas besoin d'être présent sur le serveur**, l'installeur le télécharge depuis `getcomposer.org` (signature SHA-384 vérifiée) puis lance `composer install --no-dev --optimize-autoloader`.
+
+Étapes exécutées, affichées en direct dans le navigateur avec la sortie brute de chaque commande :
+
+1. connexion à la base (test avant toute écriture) ;
+2. téléchargement de Composer si nécessaire, puis `composer install` ;
+3. écriture du `.env` (`APP_KEY` générée, `APP_DEBUG=false`) ;
+4. purge des caches, amorçage de Laravel, migrations ;
+5. création du compte administrateur ;
+6. lien `public/storage` et répertoires de stockage ;
+7. `view:cache` et `route:cache`, puis pose du verrou.
 
 ```bash
 cd /var/www/glider
-composer install --no-dev --optimize-autoloader
 sudo chown -R www-data:www-data storage bootstrap/cache database
-sudo chown www-data:www-data .          # nécessaire pour que l'installeur écrive .env
+sudo chown www-data:www-data .          # écriture de .env, vendor/ et composer.phar
 ```
 
 Ouvrir ensuite `https://championnat.example.com/install.php` et suivre le formulaire.
+
+L'installation des dépendances prend plusieurs minutes. Avant de lancer l'installeur, portez temporairement le délai de lecture FastCGI à 600 s dans le bloc `location ~ \.php$` (`fastcgi_read_timeout 600;`, puis `nginx -s reload`), sinon Nginx coupe la réponse en cours de route. L'installeur envoie `X-Accel-Buffering: no` pour que la progression s'affiche au fil de l'eau plutôt qu'en bloc à la fin.
+
+Si `proc_open()` est désactivée par `disable_functions`, ou si aucun binaire PHP CLI n'est trouvé, l'installeur le signale dans les prérequis : il faut alors lancer `composer install --no-dev --optimize-autoloader` à la main avant de le relancer.
 
 En fin de procédure, l'installeur pose un verrou `storage/installed.lock` (il refuse de se relancer tant qu'il est présent) et propose un bouton d'auto-suppression. **Supprimez `public/install.php` dans tous les cas** : tant qu'il est en ligne, quiconque supprimant le verrou pourrait réécrire la configuration.
 
 ```bash
 rm -f /var/www/glider/public/install.php
+rm -f /var/www/glider/composer.phar           # si l'installeur l'a téléchargé
 sudo chown root:root /var/www/glider          # rendre la racine non inscriptible après coup
 ```
 
@@ -225,7 +239,7 @@ server {
         fastcgi_pass unix:/run/php/php8.3-fpm.sock;
         fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
         include fastcgi_params;
-        fastcgi_read_timeout 60;
+        fastcgi_read_timeout 60;    # à porter temporairement à 600 pendant install.php
     }
 
     location ~ /\.(?!well-known).* { deny all; }

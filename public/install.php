@@ -3,7 +3,8 @@
  * Installeur web — Glider Championship
  *
  * À placer dans public/ et appeler via https://.../install.php
- * Prérequis : `composer install --no-dev --optimize-autoloader` déjà exécuté.
+ * Aucun prérequis : l'installeur télécharge Composer si nécessaire et installe
+ * lui-même les dépendances.
  *
  * Le script refuse de s'exécuter une fois storage/installed.lock créé.
  * SUPPRIMEZ CE FICHIER une fois l'installation terminée (bouton prévu en fin de procédure).
@@ -13,10 +14,14 @@ declare(strict_types=1);
 
 error_reporting(E_ALL);
 ini_set('display_errors', '1');
-set_time_limit(300);
+set_time_limit(0);
+ini_set('max_execution_time', '0');
 
 define('BASE_PATH', dirname(__DIR__));
 define('LOCK_FILE', BASE_PATH . '/storage/installed.lock');
+define('COMPOSER_PHAR', BASE_PATH . '/composer.phar');
+define('COMPOSER_HOME_DIR', BASE_PATH . '/storage/app/private/composer');
+define('VENDOR_AUTOLOAD', BASE_PATH . '/vendor/autoload.php');
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -67,6 +72,334 @@ function purge_bootstrap_cache(): void
     }
 }
 
+// ─── Affichage en direct (streaming) ─────────────────────────────────────────
+
+$STREAMING = false;
+
+/** Coupe toute mise en tampon pour que chaque étape parte immédiatement au navigateur. */
+function stream_begin(): void
+{
+    global $STREAMING;
+    $STREAMING = true;
+
+    @ini_set('zlib.output_compression', '0');
+    @ini_set('output_buffering', '0');
+    @ini_set('implicit_flush', '1');
+
+    if (!headers_sent()) {
+        header('Content-Type: text/html; charset=utf-8');
+        header('Cache-Control: no-store');
+        header('X-Accel-Buffering: no'); // nginx : désactive la bufferisation FastCGI
+    }
+
+    while (ob_get_level() > 0) {
+        @ob_end_flush();
+    }
+    ob_implicit_flush(true);
+}
+
+function stream_flush(): void
+{
+    if (ob_get_level() > 0) {
+        @ob_flush();
+    }
+    @flush();
+}
+
+/** Ouvre une étape avec un badge « en cours ». */
+function step_open(string $id, string $label): void
+{
+    echo '<li class="list-group-item" id="step-' . e($id) . '">'
+        . '<span class="badge bg-secondary me-2" id="badge-' . e($id) . '">…</span>'
+        . '<span class="fw-medium">' . e($label) . '</span>'
+        . '<pre class="detail d-none" id="out-' . e($id) . '"></pre>';
+    echo '<script>document.getElementById("step-' . e($id) . '").scrollIntoView({block:"end"});</script>';
+    stream_flush();
+}
+
+/** Ajoute du texte dans le bloc de sortie de l'étape en cours. */
+function step_output(string $id, string $chunk): void
+{
+    // Composer et Artisan colorisent leur sortie : les séquences ANSI n'ont aucun
+    // sens dans un <pre> et pollueraient l'affichage.
+    $chunk = (string) preg_replace('/\e\[[0-9;]*[A-Za-z]/', '', $chunk);
+    $chunk = str_replace("\r", '', $chunk);
+
+    if (trim($chunk) === '') {
+        return;
+    }
+    echo '<script>(function(){'
+        . 'var o=document.getElementById("out-' . e($id) . '");'
+        . 'o.classList.remove("d-none");'
+        . 'o.textContent+=' . json_encode($chunk, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . ';'
+        . 'o.scrollTop=o.scrollHeight;'
+        . 'window.scrollTo(0,document.body.scrollHeight);'
+        . '})();</script>';
+    stream_flush();
+}
+
+/** Clôt l'étape en basculant son badge en OK ou ERREUR. */
+function step_close(string $id, bool $ok, string $detail = ''): void
+{
+    if ($detail !== '') {
+        step_output($id, $detail);
+    }
+    echo '<script>(function(){'
+        . 'var b=document.getElementById("badge-' . e($id) . '");'
+        . 'b.className="badge me-2 bg-' . ($ok ? 'success' : 'danger') . '";'
+        . 'b.textContent="' . ($ok ? 'OK' : 'ERREUR') . '";'
+        . '})();</script></li>';
+    stream_flush();
+}
+
+// ─── Exécution de commandes externes ─────────────────────────────────────────
+
+function function_disabled(string $name): bool
+{
+    $disabled = array_map('trim', explode(',', (string) ini_get('disable_functions')));
+    return !function_exists($name) || in_array($name, $disabled, true);
+}
+
+function can_run_commands(): bool
+{
+    return !function_disabled('proc_open');
+}
+
+/**
+ * Exécute une commande sans passer par un shell.
+ *
+ * @param list<string> $cmd
+ * @return array{code: int, output: string}
+ */
+function run_command(array $cmd, ?string $cwd = null, array $env = [], int $timeout = 900, ?callable $onOutput = null): array
+{
+    if (!can_run_commands()) {
+        return ['code' => -1, 'output' => 'proc_open() est désactivée sur ce serveur (directive disable_functions).'];
+    }
+
+    $descriptors = [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+    $baseEnv = [
+        'PATH'                     => getenv('PATH') ?: '/usr/local/bin:/usr/bin:/bin',
+        'HOME'                     => COMPOSER_HOME_DIR,
+        'COMPOSER_HOME'            => COMPOSER_HOME_DIR,
+        'COMPOSER_NO_INTERACTION'  => '1',
+        'COMPOSER_ALLOW_SUPERUSER' => '1',
+        'COMPOSER_PROCESS_TIMEOUT' => (string) $timeout,
+    ];
+
+    $process = @proc_open($cmd, $descriptors, $pipes, $cwd ?? BASE_PATH, array_merge($baseEnv, $env));
+    if (!is_resource($process)) {
+        return ['code' => -1, 'output' => 'Impossible de lancer : ' . implode(' ', $cmd)];
+    }
+
+    fclose($pipes[0]);
+    stream_set_blocking($pipes[1], false);
+    stream_set_blocking($pipes[2], false);
+
+    $output   = '';
+    $start    = time();
+    $exitCode = -1;
+
+    $collect = function () use ($pipes, &$output, $onOutput): void {
+        $chunk = (string) stream_get_contents($pipes[1]) . (string) stream_get_contents($pipes[2]);
+        if ($chunk === '') {
+            return;
+        }
+        $output .= $chunk;
+        if ($onOutput !== null) {
+            $onOutput($chunk);
+        }
+    };
+
+    while (true) {
+        $status = proc_get_status($process);
+        $collect();
+
+        if (!$status['running']) {
+            $exitCode = (int) $status['exitcode'];
+            break;
+        }
+        if (time() - $start > $timeout) {
+            proc_terminate($process, 9);
+            $message = PHP_EOL . "[Commande interrompue après {$timeout} s]";
+            $output .= $message;
+            if ($onOutput !== null) {
+                $onOutput($message);
+            }
+            break;
+        }
+        usleep(200000);
+    }
+
+    $collect();
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+    proc_close($process);
+
+    return ['code' => $exitCode, 'output' => trim($output)];
+}
+
+/** Localise un binaire PHP en ligne de commande (PHP_BINARY vaut php-fpm sous SAPI web). */
+function find_php_binary(): ?string
+{
+    static $cached = false;
+    static $found = null;
+
+    if ($cached) {
+        return $found;
+    }
+    $cached = true;
+
+    $version    = PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION;
+    $candidates = [];
+
+    if (PHP_SAPI === 'cli') {
+        $candidates[] = PHP_BINARY;
+    }
+    foreach ([
+        PHP_BINDIR,
+        '/usr/local/bin',
+        '/usr/bin',
+        '/bin',
+        '/opt/plesk/php/' . $version . '/bin',
+        '/opt/cpanel/ea-php' . PHP_MAJOR_VERSION . PHP_MINOR_VERSION . '/root/usr/bin',
+    ] as $dir) {
+        $candidates[] = $dir . '/php';
+        $candidates[] = $dir . '/php' . $version;
+        $candidates[] = $dir . '/php' . PHP_MAJOR_VERSION . PHP_MINOR_VERSION;
+    }
+
+    foreach (array_unique($candidates) as $candidate) {
+        if (!is_string($candidate) || $candidate === '' || is_dir($candidate) || !@is_executable($candidate)) {
+            continue;
+        }
+        // Vérifie qu'il s'agit bien du binaire CLI et non de php-fpm
+        $probe = run_command([$candidate, '-r', 'echo PHP_SAPI;'], BASE_PATH, [], 15);
+        if ($probe['code'] === 0 && str_contains($probe['output'], 'cli')) {
+            return $found = $candidate;
+        }
+    }
+
+    return $found = null;
+}
+
+/** Téléchargement HTTPS via cURL ou allow_url_fopen. */
+function http_get(string $url): ?string
+{
+    if (function_exists('curl_init')) {
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_TIMEOUT        => 120,
+            CURLOPT_USERAGENT      => 'GliderChampionship-Installer',
+        ]);
+        $body = curl_exec($ch);
+        $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        if (is_string($body) && $code === 200) {
+            return $body;
+        }
+    }
+
+    if (filter_var(ini_get('allow_url_fopen'), FILTER_VALIDATE_BOOLEAN)) {
+        $context = stream_context_create([
+            'http' => ['timeout' => 120, 'user_agent' => 'GliderChampionship-Installer'],
+        ]);
+        $body = @file_get_contents($url, false, $context);
+        if (is_string($body) && $body !== '') {
+            return $body;
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Télécharge composer.phar à la racine du projet.
+ * Passe par l'installeur officiel (signature SHA-384 vérifiée), avec repli
+ * sur le téléchargement direct du phar.
+ *
+ * @return array{ok: bool, detail: string}
+ */
+function download_composer(string $phpBin): array
+{
+    $installer = http_get('https://getcomposer.org/installer');
+    $signature = http_get('https://composer.github.io/installer.sig');
+
+    if ($installer !== null && $signature !== null) {
+        $expected = trim($signature);
+        $actual   = hash('sha384', $installer);
+
+        if (!hash_equals($expected, $actual)) {
+            return ['ok' => false, 'detail' => 'Signature SHA-384 de l\'installeur Composer invalide — téléchargement abandonné.'];
+        }
+
+        $setupPath = COMPOSER_HOME_DIR . '/composer-setup.php';
+        if (@file_put_contents($setupPath, $installer) === false) {
+            return ['ok' => false, 'detail' => 'Écriture impossible dans ' . COMPOSER_HOME_DIR];
+        }
+
+        $run = run_command([
+            $phpBin,
+            $setupPath,
+            '--install-dir=' . BASE_PATH,
+            '--filename=composer.phar',
+        ], BASE_PATH, [], 300);
+        @unlink($setupPath);
+
+        if (is_file(COMPOSER_PHAR)) {
+            return ['ok' => true, 'detail' => 'composer.phar téléchargé via l\'installeur officiel (signature vérifiée).'];
+        }
+
+        $fallbackReason = $run['output'] !== '' ? $run['output'] : 'code de sortie ' . $run['code'];
+    } else {
+        $fallbackReason = 'getcomposer.org injoignable (cURL et allow_url_fopen indisponibles ou réseau bloqué).';
+    }
+
+    // Repli : téléchargement direct du phar
+    $phar = http_get('https://getcomposer.org/download/latest-stable/composer.phar');
+    if ($phar !== null && @file_put_contents(COMPOSER_PHAR, $phar) !== false) {
+        @chmod(COMPOSER_PHAR, 0755);
+        return ['ok' => true, 'detail' => 'composer.phar téléchargé directement (repli). Cause du repli : ' . $fallbackReason];
+    }
+
+    return ['ok' => false, 'detail' => 'Téléchargement de Composer impossible. ' . $fallbackReason];
+}
+
+/**
+ * Renvoie la commande Composer à exécuter, en le téléchargeant si absent.
+ *
+ * @return array{ok: bool, cmd: list<string>, detail: string}
+ */
+function resolve_composer(string $phpBin): array
+{
+    foreach ([COMPOSER_PHAR, '/usr/local/bin/composer', '/usr/bin/composer', '/opt/composer/composer'] as $path) {
+        if (is_file($path)) {
+            return [
+                'ok'     => true,
+                'cmd'    => [$phpBin, '-d', 'memory_limit=-1', $path],
+                'detail' => 'Composer trouvé : ' . $path,
+            ];
+        }
+    }
+
+    if (!is_dir(COMPOSER_HOME_DIR)) {
+        @mkdir(COMPOSER_HOME_DIR, 0775, true);
+    }
+
+    $download = download_composer($phpBin);
+    if (!$download['ok']) {
+        return ['ok' => false, 'cmd' => [], 'detail' => $download['detail']];
+    }
+
+    return [
+        'ok'     => true,
+        'cmd'    => [$phpBin, '-d', 'memory_limit=-1', COMPOSER_PHAR],
+        'detail' => $download['detail'],
+    ];
+}
+
 // ─── Vérifications système ───────────────────────────────────────────────────
 
 function system_checks(): array
@@ -90,11 +423,43 @@ function system_checks(): array
         ];
     }
 
+    $vendorReady = is_file(VENDOR_AUTOLOAD);
+
     $checks[] = [
         'label' => 'Dépendances Composer (vendor/)',
-        'ok'    => is_file(BASE_PATH . '/vendor/autoload.php'),
-        'value' => is_file(BASE_PATH . '/vendor/autoload.php') ? 'installées' : 'lancez composer install --no-dev',
-        'fatal' => true,
+        'ok'    => true,
+        'value' => $vendorReady ? 'déjà installées' : 'seront installées par l\'installeur',
+        'fatal' => false,
+    ];
+
+    // Ces trois points ne sont bloquants que s'il faut réellement lancer Composer.
+    $needsComposer = !$vendorReady;
+
+    $checks[] = [
+        'label' => 'Exécution de commandes (proc_open)' . ($needsComposer ? '' : ' — non requis'),
+        'ok'    => can_run_commands(),
+        'value' => can_run_commands() ? 'autorisée' : 'désactivée (disable_functions)',
+        'fatal' => $needsComposer,
+    ];
+
+    $phpBin = can_run_commands() ? find_php_binary() : null;
+    $checks[] = [
+        'label' => 'Binaire PHP en ligne de commande' . ($needsComposer ? '' : ' — non requis'),
+        'ok'    => $phpBin !== null,
+        'value' => $phpBin ?? 'introuvable',
+        'fatal' => $needsComposer,
+    ];
+
+    $composerFound = is_file(COMPOSER_PHAR) || is_file('/usr/local/bin/composer') || is_file('/usr/bin/composer');
+    // Ordre important : ne sonde le réseau que si Composer manque réellement.
+    $netOk = $composerFound || !$needsComposer || http_get('https://composer.github.io/installer.sig') !== null;
+    $checks[] = [
+        'label' => 'Composer',
+        'ok'    => $composerFound || $netOk,
+        'value' => $composerFound
+            ? 'présent sur le serveur'
+            : ($netOk ? 'sera téléchargé depuis getcomposer.org' : 'absent et getcomposer.org injoignable'),
+        'fatal' => $needsComposer,
     ];
 
     foreach ([
@@ -204,73 +569,127 @@ function build_env(array $cfg): string
 // ─── Étapes d'installation ───────────────────────────────────────────────────
 
 /**
- * @return array{steps: array<int, array{label: string, ok: bool, detail: string}>, ok: bool}
+ * Exécute l'installation en diffusant chaque étape au navigateur.
+ * Renvoie true si toutes les étapes bloquantes ont réussi.
  */
-function run_install(array $cfg): array
+function run_install(array $cfg): bool
 {
-    $steps = [];
-    $add = function (string $label, bool $ok, string $detail = '') use (&$steps): bool {
-        $steps[] = ['label' => $label, 'ok' => $ok, 'detail' => $detail];
-        return $ok;
-    };
-
-    // 1. Connexion base de données
+    // 1. Connexion à la base de données
+    step_open('db', 'Connexion à la base de données');
     try {
         if ($cfg['db_driver'] === 'sqlite') {
             $sqlitePath = BASE_PATH . '/database/database.sqlite';
-            if (!is_file($sqlitePath) && !touch($sqlitePath)) {
-                return ['steps' => [['label' => 'Création du fichier SQLite', 'ok' => false, 'detail' => $sqlitePath . ' non créable']], 'ok' => false];
+            if (!is_file($sqlitePath)) {
+                step_output('db', "Création de {$sqlitePath}\n");
+                if (!touch($sqlitePath)) {
+                    step_close('db', false, 'Fichier non créable — vérifiez les droits sur database/');
+                    return false;
+                }
             }
             @chmod($sqlitePath, 0664);
             new PDO('sqlite:' . $sqlitePath);
-            $add('Base de données SQLite', true, $sqlitePath);
+            step_close('db', true, 'SQLite : ' . $sqlitePath);
         } else {
             $dsn = sprintf('mysql:host=%s;port=%s;dbname=%s', $cfg['db_host'], $cfg['db_port'], $cfg['db_database']);
             new PDO($dsn, $cfg['db_username'], $cfg['db_password'], [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
-            $add('Connexion MySQL', true, $cfg['db_username'] . '@' . $cfg['db_host'] . '/' . $cfg['db_database']);
+            step_close('db', true, 'MySQL : ' . $cfg['db_username'] . '@' . $cfg['db_host'] . '/' . $cfg['db_database']);
         }
     } catch (Throwable $ex) {
-        return ['steps' => [['label' => 'Connexion à la base de données', 'ok' => false, 'detail' => $ex->getMessage()]], 'ok' => false];
+        step_close('db', false, $ex->getMessage());
+        return false;
     }
 
-    // 2. Écriture du .env (sauvegarde de l'existant)
+    // 2. Dépendances Composer
+    if (!is_file(VENDOR_AUTOLOAD) || $cfg['force_composer']) {
+        step_open('php', 'Recherche du binaire PHP en ligne de commande');
+        $phpBin = find_php_binary();
+        if ($phpBin === null) {
+            step_close('php', false, "Introuvable.\nLancez manuellement à la racine du projet :\n  composer install --no-dev --optimize-autoloader");
+            return false;
+        }
+        step_close('php', true, $phpBin);
+
+        step_open('composer', 'Mise à disposition de Composer');
+        $composer = resolve_composer($phpBin);
+        if (!$composer['ok']) {
+            step_close('composer', false, $composer['detail']);
+            return false;
+        }
+        step_close('composer', true, $composer['detail']);
+
+        if (!is_dir(COMPOSER_HOME_DIR)) {
+            @mkdir(COMPOSER_HOME_DIR, 0775, true);
+        }
+
+        step_open('deps', 'composer install --no-dev --optimize-autoloader');
+        step_output('deps', "Téléchargement des dépendances, cela peut prendre plusieurs minutes…\n\n");
+        $install = run_command(
+            array_merge($composer['cmd'], [
+                'install', '--no-dev', '--optimize-autoloader',
+                '--no-interaction', '--no-progress', '--prefer-dist',
+            ]),
+            BASE_PATH,
+            [],
+            900,
+            fn(string $chunk) => step_output('deps', $chunk)   // sortie Composer en direct
+        );
+
+        if ($install['code'] !== 0 || !is_file(VENDOR_AUTOLOAD)) {
+            step_close('deps', false, "\nÉchec (code " . $install['code'] . ').');
+            return false;
+        }
+        step_close('deps', true, "\nDépendances installées.");
+    } else {
+        step_open('deps', 'Dépendances Composer');
+        step_close('deps', true, 'vendor/ déjà présent — installation ignorée');
+    }
+
+    // 3. Écriture du .env
+    step_open('env', 'Écriture du fichier .env');
     $envPath = BASE_PATH . '/.env';
     if (is_file($envPath)) {
-        @copy($envPath, $envPath . '.backup-' . date('Ymd-His'));
+        $backup = $envPath . '.backup-' . date('Ymd-His');
+        @copy($envPath, $backup);
+        step_output('env', 'Sauvegarde de l\'existant : ' . basename($backup) . "\n");
     }
     if (file_put_contents($envPath, build_env($cfg)) === false) {
-        return ['steps' => [['label' => 'Écriture du fichier .env', 'ok' => false, 'detail' => $envPath]], 'ok' => false];
+        step_close('env', false, 'Écriture impossible dans ' . $envPath);
+        return false;
     }
     @chmod($envPath, 0640);
-    $add('Fichier .env écrit', true, 'APP_KEY générée, APP_DEBUG=false');
+    step_close('env', true, 'APP_KEY générée, APP_DEBUG=false');
 
-    // 3. Purge des caches obsolètes avant amorçage
+    // 4. Purge des caches obsolètes avant amorçage
+    step_open('purge', 'Purge des caches bootstrap');
     purge_bootstrap_cache();
-    $add('Caches bootstrap purgés', true);
+    step_close('purge', true);
 
-    // 4. Amorçage de Laravel (après écriture du .env pour que la config soit lue)
+    // 5. Amorçage de Laravel (après écriture du .env pour que la config soit lue)
+    step_open('boot', 'Amorçage de l\'application Laravel');
     try {
-        require_once BASE_PATH . '/vendor/autoload.php';
+        require_once VENDOR_AUTOLOAD;
         /** @var Illuminate\Foundation\Application $app */
         $app = require BASE_PATH . '/bootstrap/app.php';
         $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
-        $add('Application Laravel amorcée', true, 'Laravel ' . $app->version());
+        step_close('boot', true, 'Laravel ' . $app->version());
     } catch (Throwable $ex) {
-        $add('Amorçage de Laravel', false, $ex->getMessage());
-        return ['steps' => $steps, 'ok' => false];
+        step_close('boot', false, $ex->getMessage());
+        return false;
     }
 
-    // 5. Migrations
+    // 6. Migrations
+    step_open('migrate', 'Exécution des migrations');
     try {
         Illuminate\Support\Facades\Artisan::call('migrate', ['--force' => true]);
         $output = trim(Illuminate\Support\Facades\Artisan::output());
-        $add('Migrations exécutées', true, $output !== '' ? $output : 'aucune migration en attente');
+        step_close('migrate', true, $output !== '' ? $output : 'aucune migration en attente');
     } catch (Throwable $ex) {
-        $add('Migrations', false, $ex->getMessage());
-        return ['steps' => $steps, 'ok' => false];
+        step_close('migrate', false, $ex->getMessage());
+        return false;
     }
 
-    // 6. Compte administrateur
+    // 7. Compte administrateur
+    step_open('admin', 'Création du compte administrateur');
     try {
         App\Models\User::updateOrCreate(
             ['email' => $cfg['admin_email']],
@@ -279,64 +698,70 @@ function run_install(array $cfg): array
                 'password' => Illuminate\Support\Facades\Hash::make($cfg['admin_password']),
             ]
         );
-        $add('Compte administrateur créé', true, $cfg['admin_email']);
+        step_close('admin', true, $cfg['admin_email']);
     } catch (Throwable $ex) {
-        $add('Compte administrateur', false, $ex->getMessage());
-        return ['steps' => $steps, 'ok' => false];
+        step_close('admin', false, $ex->getMessage());
+        return false;
     }
 
-    // 7. Lien symbolique de stockage (le lien livré pointe vers un chemin de développement)
+    // 8. Lien symbolique de stockage (le lien livré pointe vers un chemin de développement)
+    step_open('link', 'Création du lien public/storage');
     try {
         $link = __DIR__ . '/storage';
         if (is_link($link)) {
             @unlink($link);
+            step_output('link', "Ancien lien supprimé.\n");
         }
         Illuminate\Support\Facades\Artisan::call('storage:link', ['--force' => true]);
         $ok = is_link($link) || is_dir($link);
-        $add('Lien public/storage', $ok, $ok ? '→ storage/app/public' : 'échec — créez-le manuellement');
+        step_close('link', $ok, $ok ? '→ storage/app/public' : 'échec — créez-le manuellement');
     } catch (Throwable $ex) {
-        $add('Lien public/storage', false, $ex->getMessage());
+        step_close('link', false, $ex->getMessage());
     }
 
-    // 8. Répertoires d'exécution
+    // 9. Répertoires d'exécution
+    step_open('dirs', 'Préparation des répertoires de stockage');
     foreach (['app/public/pilots', 'app/private/tiles', 'app/private/igc_tmp'] as $dir) {
         $full = BASE_PATH . '/storage/' . $dir;
         if (!is_dir($full)) {
             @mkdir($full, 0775, true);
         }
     }
-    $add('Répertoires de stockage préparés', true, 'pilots, tiles, igc_tmp');
+    step_close('dirs', true, 'pilots, tiles, igc_tmp');
 
-    // 9. Jeu de données de démonstration (optionnel)
+    // 10. Jeu de données de démonstration (optionnel)
     if ($cfg['seed_demo']) {
+        step_open('seed', 'Import des données de démonstration');
         try {
             Illuminate\Support\Facades\Artisan::call('db:seed', ['--force' => true]);
-            $add('Données de démonstration importées', true, '18 participants et pilotes fictifs');
+            step_close('seed', true, trim(Illuminate\Support\Facades\Artisan::output()));
         } catch (Throwable $ex) {
-            $add('Données de démonstration', false, $ex->getMessage());
+            step_close('seed', false, $ex->getMessage());
         }
     }
 
-    // 10. Caches de production
+    // 11. Caches de production
     //     NB : config:cache est volontairement omis — l'application lit DEV_FAKE_POSITIONS,
     //     OPENAIP_API_KEY et TILE_CACHE_TTL_SECONDS via env() hors des fichiers de config,
     //     ces valeurs deviendraient nulles une fois la config mise en cache.
+    step_open('cache', 'Génération des caches de production');
     try {
         Illuminate\Support\Facades\Artisan::call('view:cache');
         Illuminate\Support\Facades\Artisan::call('route:cache');
-        $add('Caches vues et routes générés', true, 'config:cache volontairement non exécuté');
+        step_close('cache', true, 'vues et routes mises en cache (config:cache volontairement non exécuté)');
     } catch (Throwable $ex) {
-        $add('Caches de production', false, $ex->getMessage());
+        step_close('cache', false, $ex->getMessage());
     }
 
-    // 11. Verrou
+    // 12. Verrou
+    step_open('lock', 'Pose du verrou d\'installation');
     if (@file_put_contents(LOCK_FILE, 'Installé le ' . date('c') . PHP_EOL) === false) {
-        $add('Verrou d\'installation', false, LOCK_FILE . ' non créable — l\'installeur restera réexécutable !');
+        step_close('lock', false, LOCK_FILE . ' non créable — l\'installeur restera réexécutable !');
     } else {
-        $add('Verrou d\'installation posé', true, 'storage/installed.lock');
+        step_close('lock', true, 'storage/installed.lock');
     }
 
-    return ['steps' => $steps, 'ok' => true];
+    return true;
 }
 
 // ─── Routage du script ───────────────────────────────────────────────────────
@@ -345,8 +770,7 @@ $locked    = is_file(LOCK_FILE);
 $action    = post('action');
 $checks    = system_checks();
 $canInstall = checks_ok($checks);
-$errors    = [];
-$result    = null;
+$errors     = [];
 
 // Auto-suppression après installation
 if ($action === 'selfdestruct' && $locked) {
@@ -400,6 +824,7 @@ if ($action === 'install') {
         'admin_password' => post('admin_password'),
         'openaip_key'    => post('openaip_key'),
         'seed_demo'      => checked('seed_demo'),
+        'force_composer' => checked('force_composer'),
     ];
 
     if (!$canInstall) {
@@ -425,13 +850,73 @@ if ($action === 'install') {
     }
 
     if (!$errors) {
-        $result = run_install($cfg);
+        stream_begin();
+        page_head();
+
+        echo '<div class="alert alert-info d-flex align-items-center gap-2" id="running">'
+            . '<div class="spinner-border spinner-border-sm" role="status"></div>'
+            . '<div>Installation en cours — ne fermez pas cette page.</div></div>';
+        echo '<ul class="list-group mb-4">';
+        stream_flush();
+
+        $ok = run_install($cfg);
+
+        echo '</ul>';
+        echo '<script>document.getElementById("running").remove();</script>';
+        render_outcome($ok);
+        page_foot();
+        exit;
     }
 }
+
+/** Bloc final affiché une fois toutes les étapes diffusées. */
+function render_outcome(bool $ok): void
+{
+    if (!$ok) { ?>
+        <div class="alert alert-danger">
+            <h5 class="alert-heading">Installation interrompue</h5>
+            <p class="mb-0">Corrigez l'erreur signalée ci-dessus, puis relancez l'installeur.</p>
+        </div>
+        <a href="install.php" class="btn btn-primary">Retour au formulaire</a>
+        <?php
+        return;
+    } ?>
+    <div class="alert alert-success">
+        <h5 class="alert-heading">Installation terminée</h5>
+        <p class="mb-0">L'application est opérationnelle.</p>
+    </div>
+
+    <div class="alert alert-danger">
+        <h6 class="alert-heading">À faire immédiatement</h6>
+        <ol class="mb-0 ps-3">
+            <li>Supprimer <code>public/install.php</code> (bouton ci-dessous).</li>
+            <li>Ajuster les propriétaires côté serveur :
+                <code>chown -R www-data:www-data storage bootstrap/cache database</code></li>
+            <li>La détection des balises est effectuée par le navigateur : un poste doit garder
+                la page <code>/</code> ouverte pendant toute l'épreuve.</li>
+            <li><code>POST /api/validate-turnpoint</code> est public — restreindre l'accès réseau
+                pendant une épreuve officielle (voir <code>DEPLOIEMENT.md</code> §12).</li>
+        </ol>
+    </div>
+
+    <div class="d-flex gap-2 flex-wrap">
+        <form method="post"><input type="hidden" name="action" value="selfdestruct">
+            <button class="btn btn-danger">Supprimer install.php</button></form>
+        <a href="/admin/login" class="btn btn-primary">Administration</a>
+        <a href="/" class="btn btn-outline-secondary">Voir la carte</a>
+    </div>
+<?php }
 
 // ─── Rendu ───────────────────────────────────────────────────────────────────
 
 function render_page(callable $body): void
+{
+    page_head();
+    $body();
+    page_foot();
+}
+
+function page_head(): void
 {
     ?><!doctype html>
 <html lang="fr">
@@ -453,63 +938,17 @@ function render_page(callable $body): void
 <div class="wrap">
     <h1 class="h3 mb-1">Glider Championship</h1>
     <p class="text-muted mb-4">Installation du serveur</p>
-    <?php $body(); ?>
+<?php
+    // Bourrage : certains navigateurs et proxys n'affichent rien avant ~1 Ko reçu.
+    echo '<!--' . str_repeat(' ', 2048) . '-->' . PHP_EOL;
+}
+
+function page_foot(): void
+{
+    ?>
 </div>
 </body>
 </html><?php
-}
-
-if ($result !== null) {
-    render_page(function () use ($result) { ?>
-        <?php if ($result['ok']): ?>
-            <div class="alert alert-success">
-                <h5 class="alert-heading">Installation terminée</h5>
-                <p class="mb-0">L'application est opérationnelle.</p>
-            </div>
-        <?php else: ?>
-            <div class="alert alert-danger">
-                <h5 class="alert-heading">Installation interrompue</h5>
-                <p class="mb-0">Corrigez l'erreur ci-dessous, puis relancez l'installeur.</p>
-            </div>
-        <?php endif; ?>
-
-        <ul class="list-group mb-4">
-            <?php foreach ($result['steps'] as $step): ?>
-                <li class="list-group-item">
-                    <span class="badge bg-<?= $step['ok'] ? 'success' : 'danger' ?> me-2"><?= $step['ok'] ? 'OK' : 'ERREUR' ?></span>
-                    <?= e($step['label']) ?>
-                    <?php if ($step['detail'] !== ''): ?>
-                        <pre class="detail"><?= e($step['detail']) ?></pre>
-                    <?php endif; ?>
-                </li>
-            <?php endforeach; ?>
-        </ul>
-
-        <?php if ($result['ok']): ?>
-            <div class="alert alert-danger">
-                <h6 class="alert-heading">À faire immédiatement</h6>
-                <ol class="mb-0 ps-3">
-                    <li>Supprimer <code>public/install.php</code> (bouton ci-dessous).</li>
-                    <li>Ajuster les propriétaires côté serveur :
-                        <code>chown -R www-data:www-data storage bootstrap/cache database</code></li>
-                    <li>La détection des balises est effectuée par le navigateur : un poste doit garder
-                        la page <code>/</code> ouverte pendant toute l'épreuve.</li>
-                    <li><code>POST /api/validate-turnpoint</code> est public — restreindre l'accès réseau
-                        pendant une épreuve officielle (voir <code>DEPLOIEMENT.md</code> §12).</li>
-                </ol>
-            </div>
-
-            <div class="d-flex gap-2 flex-wrap">
-                <form method="post"><input type="hidden" name="action" value="selfdestruct">
-                    <button class="btn btn-danger">Supprimer install.php</button></form>
-                <a href="/admin/login" class="btn btn-primary">Administration</a>
-                <a href="/" class="btn btn-outline-secondary">Voir la carte</a>
-            </div>
-        <?php else: ?>
-            <a href="install.php" class="btn btn-primary">Retour au formulaire</a>
-        <?php endif; ?>
-    <?php });
-    exit;
 }
 
 render_page(function () use ($checks, $canInstall, $errors) { ?>
@@ -642,10 +1081,21 @@ render_page(function () use ($checks, $canInstall, $errors) { ?>
                     <span class="text-muted">(18 participants et pilotes fictifs — à ne pas cocher en production)</span>
                 </label>
             </div>
+            <div class="form-check mb-2">
+                <input class="form-check-input" type="checkbox" name="force_composer" id="force_composer" <?= checked('force_composer') ? 'checked' : '' ?>>
+                <label class="form-check-label" for="force_composer">
+                    Relancer <code>composer install</code> même si <code>vendor/</code> existe déjà
+                </label>
+            </div>
         </div>
 
-        <div class="card-footer d-flex justify-content-between align-items-center">
-            <span class="text-muted small">Le fichier <code>.env</code> sera écrit avec <code>APP_DEBUG=false</code>.</span>
+        <div class="card-footer d-flex justify-content-between align-items-center gap-3">
+            <span class="text-muted small">
+                Le fichier <code>.env</code> sera écrit avec <code>APP_DEBUG=false</code>.
+                <?php if (!is_file(VENDOR_AUTOLOAD)): ?>
+                    <br>L'installation des dépendances peut demander plusieurs minutes — ne fermez pas la page.
+                <?php endif; ?>
+            </span>
             <button class="btn btn-primary" <?= $canInstall ? '' : 'disabled' ?>>Installer</button>
         </div>
     </form>
