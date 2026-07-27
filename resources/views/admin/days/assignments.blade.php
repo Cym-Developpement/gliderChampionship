@@ -16,7 +16,9 @@
 <p class="text-muted">
     Le planeur choisi ici ne vaut que pour cette journée : c'est son handicap qui entre
     dans le calcul des points, et son immatriculation qui rattache les positions OGN au pilote.
-    Sans choix explicite, le planeur habituel du pilote est utilisé.
+    Tant que cet écran n'a jamais été enregistré pour la journée, c'est le planeur habituel
+    du pilote qui s'applique. « Ne vole pas ce jour » retire le pilote de la vue live et du
+    calcul des points de la journée.
 </p>
 
 <form action="{{ route('admin.days.updateAssignments', $day) }}" method="POST">
@@ -42,7 +44,7 @@
                     <td style="min-width:22rem">
                         <select name="assignments[{{ $pilot->id }}]" class="form-select form-select-sm"
                                 data-handicaps-target="handicap-{{ $pilot->id }}">
-                            <option value="">— aucun planeur —</option>
+                            <option value="">— ne vole pas ce jour —</option>
                             @foreach($gliders as $glider)
                                 <option value="{{ $glider->id }}"
                                         data-handicap="{{ number_format((float) $glider->handicap, 2) }}"

@@ -160,6 +160,12 @@ class ScoringService
             ?? '(DISTANCE_TURNPOINT * BASE) / COEF_PLANEUR';
         $base = (float) (Setting::get('scoring_base', $comp->id) ?? 100);
 
+        // Pilote explicitement déclaré non volant ce jour-là : aucun point,
+        // même si des balises avaient été validées avant la décision.
+        if (!$pilot->fliesOnDay($day)) {
+            return 0;
+        }
+
         // Handicap du planeur affecté ce jour-là, à défaut celui du planeur
         // associé sur toute la compétition.
         $participant = $pilot->participantForDay($day, $comp->id);

@@ -47,6 +47,23 @@ class Pilot extends Model
     }
 
     /**
+     * Le pilote est-il engagé cette journée-là ?
+     *
+     * Faux uniquement lorsqu'une affectation existe et ne désigne aucun
+     * planeur : c'est une décision explicite. L'absence d'affectation reste
+     * un défaut, pas un forfait — sans quoi une compétition qui n'utilise
+     * jamais cet écran verrait tous ses pilotes exclus.
+     */
+    public function fliesOnDay(CompetitionDay $day): bool
+    {
+        $assignment = DayAssignment::where('competition_day_id', $day->id)
+            ->where('pilot_id', $this->id)
+            ->first();
+
+        return !($assignment && $assignment->participant_id === null);
+    }
+
+    /**
      * Planeur du pilote pour une journée donnée.
      *
      * L'affectation du jour prime ; à défaut on retombe sur l'association
@@ -63,7 +80,10 @@ class Pilot extends Model
                 ->with('participant')
                 ->first();
 
-            if ($assignment && $assignment->participant) {
+            // Une ligne existe : elle fait foi, y compris lorsqu'elle ne
+            // désigne aucun planeur — le pilote ne vole pas ce jour-là.
+            // Sans ligne du tout, on retombe sur l'association globale.
+            if ($assignment) {
                 return $assignment->participant;
             }
         }

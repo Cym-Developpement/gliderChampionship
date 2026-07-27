@@ -112,24 +112,20 @@ class CompetitionDayController extends Controller
         $cleared = 0;
 
         foreach ($data['assignments'] ?? [] as $pilotId => $participantId) {
-            if (empty($participantId)) {
-                DayAssignment::where('competition_day_id', $day->id)
-                    ->where('pilot_id', $pilotId)
-                    ->delete();
-                $cleared++;
-                continue;
-            }
-
+            // Une ligne est écrite dans tous les cas, y compris sans planeur :
+            // supprimer la ligne relancerait le repli sur l'association
+            // globale et la désaffectation resterait sans effet.
             DayAssignment::updateOrCreate(
                 ['competition_day_id' => $day->id, 'pilot_id' => $pilotId],
-                ['participant_id' => $participantId]
+                ['participant_id' => $participantId ?: null]
             );
-            $kept++;
+
+            empty($participantId) ? $cleared++ : $kept++;
         }
 
         // Le handicap ayant pu changer, les scores provisoires du jour bougent.
         $message = "Affectations enregistrées : {$kept} pilote(s) avec planeur";
-        $message .= $cleared > 0 ? ", {$cleared} sans affectation." : '.';
+        $message .= $cleared > 0 ? ", {$cleared} ne volant pas ce jour-là." : '.';
 
         return redirect()->route('admin.days.assignments', $day)->with('success', $message);
     }
