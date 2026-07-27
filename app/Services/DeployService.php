@@ -4,6 +4,7 @@ namespace App\Services;
 
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\Process\Process;
 
 /**
  * Déploiement déclenché par le webhook GitHub : git pull, dépendances,
@@ -82,6 +83,22 @@ class DeployService
         $pull = $this->exec([$git, 'pull', '--ff-only', 'origin', $branch], 300);
         $this->line('$ git pull --ff-only origin ' . $branch);
         $this->line($pull['output']);
+
+        // Le code arrivant aussi par FTP, des fichiers suivis peuvent diverger
+        // et bloquer la fusion. On ne les écarte qu'à ce moment-là : les
+        // supprimer d'emblée détruirait un travail en cours sans nécessité.
+        if ($pull['code'] !== 0 && $this->blockedByLocalChanges($pull['output'])) {
+            $this->line('Fichiers locaux divergents — réalignement sur le dépôt.');
+
+            $discard = $this->exec([$git, 'checkout', '--', '.'], 60);
+            $this->line('$ git checkout -- .');
+            $this->line($discard['output']);
+
+            $pull = $this->exec([$git, 'pull', '--ff-only', 'origin', $branch], 300);
+            $this->line('$ git pull --ff-only origin ' . $branch . '   (seconde tentative)');
+            $this->line($pull['output']);
+        }
+
         if ($pull['code'] !== 0) {
             $this->line('ÉCHEC : git pull a retourné ' . $pull['code'] . '.');
             return false;
@@ -176,6 +193,18 @@ class DeployService
         $this->line('Dépôt initialisé sur ' . $url . ' (branche ' . $branch . ').');
 
         return true;
+    }
+
+    /** Le pull a-t-il échoué à cause de modifications locales, et non d'autre chose ? */
+    private function blockedByLocalChanges(string $output): bool
+    {
+        foreach (['local changes', 'would be overwritten', 'modifications locales'] as $marker) {
+            if (stripos($output, $marker) !== false) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /** Ajoute le remote origin s'il manque à un dépôt existant. */
@@ -378,17 +407,31 @@ class DeployService
         $version = PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION;
         $compact = PHP_MAJOR_VERSION . PHP_MINOR_VERSION;
 
-        return $this->phpBinary = $this->findBinary([
-            'php',
-            'php' . $version,
+        $candidates = [];
+
+        // PHP_BINARY vaut php-fpm ou php-cgi sous SAPI web : inutilisable tel
+        // quel, mais directement exploitable dans le cas contraire.
+        if (!preg_match('/(fpm|cgi)/', PHP_BINARY)) {
+            $candidates[] = PHP_BINARY;
+        }
+
+        $candidates = array_merge($candidates, [
+            PHP_BINDIR . '/php' . $version,
+            PHP_BINDIR . '/php' . PHP_MAJOR_VERSION,
+            PHP_BINDIR . '/php',
             '/usr/local/php' . $version . '/bin/php',   // OVH mutualisé
             '/opt/alt/php' . $compact . '/usr/bin/php', // CloudLinux
             '/opt/cpanel/ea-php' . $compact . '/root/usr/bin/php',
             '/opt/plesk/php/' . $version . '/bin/php',
-            PHP_BINDIR . '/php',
             '/usr/local/bin/php',
             '/usr/bin/php',
-        ], '-r', 'echo PHP_SAPI;', 'cli');
+            // En dernier ressort le nom nu : le shell le résout avec son propre
+            // PATH, ce qui aboutit là où les chemins devinés échouent.
+            'php' . $version,
+            'php',
+        ]);
+
+        return $this->phpBinary = $this->findBinary($candidates, '-r', 'echo PHP_SAPI;', 'cli');
     }
 
     private function findComposer(): ?string
@@ -425,60 +468,45 @@ class DeployService
     }
 
     /**
+     * Exécute une commande via Symfony Process.
+     *
+     * Point décisif sur hébergement mutualisé : Process **hérite** de
+     * l'environnement du parent et passe par le shell, qui résout donc les
+     * binaires avec son propre PATH. Un proc_open() nourri d'un tableau
+     * d'environnement le remplace au contraire intégralement — et un PATH
+     * deviné rendait git introuvable alors qu'il est bien installé.
+     *
      * @param list<string> $cmd
      * @return array{code: int, output: string}
      */
-    private function exec(array $cmd, int $timeout): array
+    private function exec(array $cmd, int $timeout, ?callable $onOutput = null): array
     {
-        $disabled = array_map('trim', explode(',', (string) ini_get('disable_functions')));
-        if (!function_exists('proc_open') || in_array('proc_open', $disabled, true)) {
+        if (!$this->commandsAvailable()) {
             return ['code' => -1, 'output' => 'proc_open() est désactivée sur ce serveur.'];
         }
 
-        $descriptors = [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
-        $env = [
-            'PATH'                     => getenv('PATH') ?: '/usr/local/bin:/usr/bin:/bin',
-            'HOME'                     => storage_path('app/private/composer'),
-            'COMPOSER_HOME'            => storage_path('app/private/composer'),
-            'COMPOSER_NO_INTERACTION'  => '1',
-            'COMPOSER_ALLOW_SUPERUSER' => '1',
-            'GIT_TERMINAL_PROMPT'      => '0',   // jamais de prompt d'identifiants
-        ];
+        try {
+            $process = new Process($cmd, base_path(), [
+                // Ajoutées à l'environnement hérité, non substituées à lui.
+                'HOME'                     => base_path(),
+                'COMPOSER_HOME'            => base_path() . '/.composer',
+                'COMPOSER_NO_INTERACTION'  => '1',
+                'COMPOSER_ALLOW_SUPERUSER' => '1',
+                'GIT_TERMINAL_PROMPT'      => '0',   // jamais d'invite d'identifiants
+            ]);
+            $process->setTimeout($timeout);
 
-        $process = @proc_open($cmd, $descriptors, $pipes, base_path(), $env);
-        if (!is_resource($process)) {
-            return ['code' => -1, 'output' => 'Impossible de lancer : ' . implode(' ', $cmd)];
+            $process->run($onOutput === null ? null : function ($type, $buffer) use ($onOutput) {
+                $onOutput($buffer);
+            });
+
+            return [
+                'code'   => $process->getExitCode() ?? -1,
+                'output' => trim($process->getOutput() . $process->getErrorOutput()),
+            ];
+        } catch (\Throwable $ex) {
+            return ['code' => -1, 'output' => $ex->getMessage()];
         }
-
-        fclose($pipes[0]);
-        $output   = '';
-        $start    = time();
-        $exitCode = -1;
-        stream_set_blocking($pipes[1], false);
-        stream_set_blocking($pipes[2], false);
-
-        while (true) {
-            $status  = proc_get_status($process);
-            $output .= (string) stream_get_contents($pipes[1]) . (string) stream_get_contents($pipes[2]);
-
-            if (!$status['running']) {
-                $exitCode = (int) $status['exitcode'];
-                break;
-            }
-            if (time() - $start > $timeout) {
-                proc_terminate($process, 9);
-                $output .= PHP_EOL . "[Interrompu après {$timeout} s]";
-                break;
-            }
-            usleep(200000);
-        }
-
-        $output .= (string) stream_get_contents($pipes[1]) . (string) stream_get_contents($pipes[2]);
-        fclose($pipes[1]);
-        fclose($pipes[2]);
-        proc_close($process);
-
-        return ['code' => $exitCode, 'output' => trim($output)];
     }
 
     private function line(string $text): void
