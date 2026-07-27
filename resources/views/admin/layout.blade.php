@@ -71,6 +71,26 @@
         @yield('content')
     </div>
 
+    <footer class="container text-center text-muted small py-4 mt-4 border-top">
+        @isset($appVersion)
+            @php($commitUrl = \App\Services\VersionService::commitUrl($appVersion['sha']))
+            <span title="Dernier commit déployé">{{ $appVersion['subject'] }}</span>
+            —
+            @if($commitUrl)
+                <a href="{{ $commitUrl }}" target="_blank" rel="noopener" class="text-muted font-monospace">
+                    {{ substr($appVersion['sha'], 0, 7) }}
+                </a>
+            @else
+                <span class="font-monospace">{{ substr($appVersion['sha'], 0, 7) }}</span>
+            @endif
+            @if($appVersion['date'])
+                <span class="ms-1">({{ \Illuminate\Support\Carbon::parse($appVersion['date'])->format('d/m/Y H:i') }})</span>
+            @endif
+        @else
+            <span>Version déployée inconnue</span>
+        @endisset
+    </footer>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>

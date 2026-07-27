@@ -87,7 +87,17 @@ class DeployService
         // 3. Migrations et caches
         //    Exécutés dans un sous-processus quand c'est possible : le code PHP
         //    chargé en mémoire est celui d'avant le pull.
-        return $this->runArtisan();
+        if (!$this->runArtisan()) {
+            return false;
+        }
+
+        // 4. Fige la version déployée pour le pied de page de l'administration.
+        $version = VersionService::record();
+        $this->line($version !== null
+            ? 'Version déployée : ' . substr($version['sha'], 0, 7) . ' — ' . $version['subject']
+            : 'Version non enregistrée (git illisible).');
+
+        return true;
     }
 
     /**
