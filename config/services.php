@@ -32,6 +32,7 @@ return [
         'webhook_secret' => env('GITHUB_WEBHOOK_SECRET'),
         'deploy_enabled' => env('GITHUB_DEPLOY_ENABLED', false),
         'deploy_branch'  => env('GITHUB_DEPLOY_BRANCH', 'main'),
+        'repository_url' => env('GITHUB_REPOSITORY_URL'),
     ],
 
     'slack' => [

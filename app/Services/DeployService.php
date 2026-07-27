@@ -19,11 +19,18 @@ class DeployService
 
     private ?string $phpBinary = null;
 
+    private ?string $cloneUrl = null;
+
     /**
+     * @param string|null $cloneUrl URL de clonage transmise par le webhook,
+     *                              utilisée si le répertoire n'est pas encore
+     *                              un dépôt git et qu'aucune URL n'est configurée.
      * @return array{ok: bool, log: string}
      */
-    public function run(): array
+    public function run(?string $cloneUrl = null): array
     {
+        $this->cloneUrl = $cloneUrl;
+
         $lock = $this->acquireLock();
         if ($lock === null) {
             return ['ok' => false, 'log' => 'Un déploiement est déjà en cours.'];
@@ -56,6 +63,10 @@ class DeployService
             return false;
         }
 
+        if (!$this->ensureRepository($git, $branch)) {
+            return false;
+        }
+
         $pull = $this->exec([$git, 'pull', '--ff-only', 'origin', $branch], 300);
         $this->line('$ git pull --ff-only origin ' . $branch);
         $this->line($pull['output']);
@@ -77,6 +88,117 @@ class DeployService
         //    Exécutés dans un sous-processus quand c'est possible : le code PHP
         //    chargé en mémoire est celui d'avant le pull.
         return $this->runArtisan();
+    }
+
+    /**
+     * S'assure que le répertoire est un dépôt git rattaché à origin.
+     *
+     * Premier déploiement sur un répertoire téléversé « à plat » : on initialise
+     * le dépôt puis on se cale sur la branche distante avec `reset --mixed`,
+     * qui repositionne l'historique sans toucher aux fichiers présents. Un
+     * `reset --hard` écraserait les éventuels ajustements faits sur le serveur.
+     */
+    private function ensureRepository(string $git, string $branch): bool
+    {
+        $inside = $this->exec([$git, 'rev-parse', '--is-inside-work-tree'], 30);
+
+        if ($inside['code'] === 0 && str_contains($inside['output'], 'true')) {
+            return $this->ensureOrigin($git);
+        }
+
+        $url = $this->repositoryUrl();
+        if ($url === null) {
+            $this->line('ÉCHEC : le répertoire n\'est pas un dépôt git et aucune URL de clonage n\'est disponible.');
+            $this->line('Renseignez GITHUB_REPOSITORY_URL dans le .env.');
+            return false;
+        }
+
+        $this->line('Répertoire non versionné — initialisation du dépôt.');
+
+        foreach ([
+            [$git, 'init', '-b', $branch],
+            [$git, 'remote', 'add', 'origin', $url],
+            [$git, 'fetch', 'origin', $branch],
+        ] as $command) {
+            $run = $this->exec($command, 300);
+            $this->line('$ git ' . implode(' ', array_slice($command, 1)));
+            $this->line($run['output']);
+
+            if ($run['code'] !== 0) {
+                $this->line('ÉCHEC : initialisation interrompue (code ' . $run['code'] . ').');
+                return false;
+            }
+        }
+
+        // Rattache l'historique sans modifier le contenu du répertoire.
+        $reset = $this->exec([$git, 'reset', '--mixed', 'FETCH_HEAD'], 120);
+        $this->line('$ git reset --mixed FETCH_HEAD');
+        $this->line($reset['output']);
+
+        if ($reset['code'] !== 0) {
+            $this->line('ÉCHEC : impossible de se caler sur ' . $branch . '.');
+            return false;
+        }
+
+        $this->exec([$git, 'branch', '--set-upstream-to=origin/' . $branch, $branch], 30);
+
+        // Signale les fichiers suivis qui diffèrent déjà du distant : le pull
+        // suivant échouerait dessus, autant que ce soit explicite dans le log.
+        $status = $this->exec([$git, 'status', '--porcelain', '--untracked-files=no'], 60);
+        if (trim($status['output']) !== '') {
+            $this->line('Fichiers suivis différant du dépôt distant :');
+            $this->line($status['output']);
+            $this->line('Ils seront conservés ; un git pull ultérieur peut échouer tant qu\'ils divergent.');
+        }
+
+        $this->line('Dépôt initialisé sur ' . $url . ' (branche ' . $branch . ').');
+
+        return true;
+    }
+
+    /** Ajoute le remote origin s'il manque à un dépôt existant. */
+    private function ensureOrigin(string $git): bool
+    {
+        $remote = $this->exec([$git, 'remote', 'get-url', 'origin'], 30);
+        if ($remote['code'] === 0 && trim($remote['output']) !== '') {
+            return true;
+        }
+
+        $url = $this->repositoryUrl();
+        if ($url === null) {
+            $this->line('ÉCHEC : dépôt git sans remote « origin » et aucune URL configurée.');
+            return false;
+        }
+
+        $add = $this->exec([$git, 'remote', 'add', 'origin', $url], 30);
+        $this->line('$ git remote add origin ' . $url);
+        $this->line($add['output']);
+
+        return $add['code'] === 0;
+    }
+
+    /**
+     * URL de clonage : configuration d'abord, charge utile du webhook ensuite.
+     * Restreinte à HTTPS sur github.com — on ne clone pas une URL arbitraire,
+     * ni une URL en ssh:// ou file:// qui pourrait pointer n'importe où.
+     */
+    private function repositoryUrl(): ?string
+    {
+        foreach ([(string) config('services.github.repository_url'), (string) $this->cloneUrl] as $candidate) {
+            $candidate = trim($candidate);
+            if ($candidate === '') {
+                continue;
+            }
+
+            $parts = parse_url($candidate);
+            if (($parts['scheme'] ?? '') === 'https' && ($parts['host'] ?? '') === 'github.com') {
+                return $candidate;
+            }
+
+            $this->line('URL de dépôt ignorée (HTTPS sur github.com attendu) : ' . $candidate);
+        }
+
+        return null;
     }
 
     /** Compare composer.lock avant/après le pull via le diff du dernier merge. */
@@ -309,6 +431,9 @@ class DeployService
 
     private function line(string $text): void
     {
+        // Composer et Artisan colorisent leur sortie : illisible dans un journal.
+        $text = (string) preg_replace('/\e\[[0-9;]*[A-Za-z]/', '', $text);
+
         if (trim($text) !== '') {
             $this->log[] = rtrim($text);
         }

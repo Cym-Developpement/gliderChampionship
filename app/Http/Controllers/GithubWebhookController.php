@@ -62,10 +62,14 @@ class GithubWebhookController extends Controller
 
         // GitHub coupe la connexion au bout de 10 s : on répond tout de suite et
         // le déploiement se poursuit une fois la réponse envoyée.
-        dispatch(function () use ($deployer) {
+        // clone_url sert uniquement au tout premier déploiement, quand le
+        // répertoire n'est pas encore un dépôt git.
+        $cloneUrl = (string) $request->input('repository.clone_url', '');
+
+        dispatch(function () use ($deployer, $cloneUrl) {
             @ignore_user_abort(true);
             @set_time_limit(0);
-            $deployer->run();
+            $deployer->run($cloneUrl !== '' ? $cloneUrl : null);
         })->afterResponse();
 
         // Content-Length + Connection: close permettent aux SAPI dépourvues de

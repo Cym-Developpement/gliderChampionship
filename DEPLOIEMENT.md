@@ -231,22 +231,27 @@ php artisan up
 
 ### Côté serveur
 
-Le répertoire doit être un clone git dont la branche suit `origin/main`, et l'utilisateur du serveur web doit pouvoir y écrire :
-
-```bash
-sudo -u www-data git -C /var/www/glider status
-sudo -u www-data git -C /var/www/glider config pull.ff only
-```
-
 Dans `.env` :
 
 ```dotenv
 GITHUB_DEPLOY_ENABLED=true
 GITHUB_WEBHOOK_SECRET=<chaîne aléatoire, ex. `openssl rand -hex 32`>
 GITHUB_DEPLOY_BRANCH=main
+GITHUB_REPOSITORY_URL=https://github.com/Cym-Developpement/gliderChampionship.git
 ```
 
 Sans `GITHUB_WEBHOOK_SECRET`, la route répond 503 : aucun déploiement anonyme n'est possible.
+
+L'utilisateur du serveur web doit pouvoir écrire dans le répertoire et dans `.git` :
+
+```bash
+sudo chown -R www-data:www-data /var/www/glider
+sudo -u www-data git -C /var/www/glider config pull.ff only
+```
+
+**Si le répertoire n'est pas un dépôt git** — cas d'un déploiement initial par FTP ou via `install.php` — le premier webhook l'initialise tout seul : `git init`, ajout du remote `origin`, `fetch`, puis `git reset --mixed` sur la branche configurée. Ce reset repositionne l'historique **sans toucher aux fichiers présents** ; un `reset --hard` écraserait les ajustements faits sur le serveur. Les fichiers suivis qui diffèrent déjà du dépôt sont listés dans le journal, car ils peuvent faire échouer un `git pull` ultérieur.
+
+L'URL de clonage provient de `GITHUB_REPOSITORY_URL`, ou à défaut du champ `repository.clone_url` de la charge utile. Seules les URL HTTPS sur `github.com` sont acceptées. Pour un dépôt privé, l'initialisation automatique échouera faute d'identifiants : clonez-le manuellement une première fois avec une clé de déploiement.
 
 ### Côté GitHub
 
