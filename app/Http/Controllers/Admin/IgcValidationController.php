@@ -75,6 +75,11 @@ class IgcValidationController extends Controller
             ->flip()
             ->toArray();
 
+        // Points tels qu'ils seront comptés : même service que le classement,
+        // avec le handicap du planeur affecté ce jour-là.
+        $config   = ScoringService::scoringConfig($comp);
+        $handicap = (float) ($pilot->participantForDay($day, $comp->id)?->handicap ?? 1.00);
+
         // For each turnpoint: use passedNearPoint() from the library
         $results = [];
         foreach ($turnpoints as $tp) {
@@ -99,6 +104,9 @@ class IgcValidationController extends Controller
                 'distance_m'     => $distM,
                 'fix_count_zone' => $near->fixCountInside,
                 'validated_at'   => $validatedAt,
+                'points'         => (int) round(
+                    ScoringService::pointsForTurnpoint($tp, $comp, $handicap, $config)
+                ),
             ];
         }
 

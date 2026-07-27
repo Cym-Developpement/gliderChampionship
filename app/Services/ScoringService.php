@@ -7,6 +7,7 @@ use App\Models\CompetitionDay;
 use App\Models\Pilot;
 use App\Models\PilotTurnpoint;
 use App\Models\Setting;
+use App\Models\Turnpoint;
 
 class ScoringService
 {
@@ -229,10 +230,6 @@ class ScoringService
      */
     public static function computePilotDayScore(Pilot $pilot, Competition $comp, CompetitionDay $day): int
     {
-        $formula = Setting::get('scoring_formula', $comp->id)
-            ?? '(DISTANCE_TURNPOINT * BASE) / COEF_PLANEUR';
-        $base = (float) (Setting::get('scoring_base', $comp->id) ?? 100);
-
         // Pilote explicitement déclaré non volant ce jour-là : aucun point,
         // même si des balises avaient été validées avant la décision.
         if (!$pilot->fliesOnDay($day)) {
@@ -251,36 +248,70 @@ class ScoringService
             ->get();
 
         $totalScore = 0.0;
+        $config     = self::scoringConfig($comp);   // lu une fois, pas par balise
 
         foreach ($validatedTurnpoints as $pt) {
-            $tp = $pt->turnpoint;
-            if (!$tp) continue;
-
-            $distance = self::haversineKm(
-                (float) $comp->start_lat,
-                (float) $comp->start_lng,
-                (float) $tp->lat,
-                (float) $tp->lng
-            );
-
-            $variables = [
-                'DISTANCE_TURNPOINT' => $distance,
-                'BASE' => $base,
-                'COEF_PLANEUR' => $handicap,
-                'HANDICAP' => $handicap,
-                // Valeur propre à la balise : sert aux barèmes fixes et aux
-                // bonus, que la distance seule ne permet pas d'exprimer.
-                'POINTS_BALISE' => (float) ($tp->points ?? 0),
-            ];
-
-            try {
-                $totalScore += self::evaluate($formula, $variables);
-            } catch (\RuntimeException $e) {
-                // Skip turnpoint on formula error
-                continue;
+            if ($pt->turnpoint) {
+                $totalScore += self::pointsForTurnpoint($pt->turnpoint, $comp, $handicap, $config);
             }
         }
 
         return (int) round($totalScore);
+    }
+
+    /**
+     * Formule et base en vigueur pour la compétition.
+     *
+     * @return array{formula: string, base: float}
+     */
+    public static function scoringConfig(Competition $comp): array
+    {
+        return [
+            'formula' => Setting::get('scoring_formula', $comp->id)
+                ?? '(DISTANCE_TURNPOINT * BASE) / COEF_PLANEUR',
+            'base' => (float) (Setting::get('scoring_base', $comp->id) ?? 100),
+        ];
+    }
+
+    /**
+     * Points rapportés par une balise, formule appliquée.
+     *
+     * Extrait du calcul journalier pour que l'écran d'analyse IGC affiche
+     * exactement ce qui sera compté, sans réimplémenter la règle.
+     *
+     * Une formule fautive rend 0 : le classement ne doit pas s'interrompre en
+     * pleine épreuve à cause d'une erreur de saisie.
+     */
+    public static function pointsForTurnpoint(
+        Turnpoint $tp,
+        Competition $comp,
+        float $handicap = 1.00,
+        ?array $config = null
+    ): float {
+        // La configuration est passée par l'appelant lorsqu'il boucle sur des
+        // balises, pour ne pas relire les réglages à chaque tour. Pas de cache
+        // statique : il survivrait à une modification des réglages.
+        $config ??= self::scoringConfig($comp);
+
+        $distance = self::haversineKm(
+            (float) $comp->start_lat,
+            (float) $comp->start_lng,
+            (float) $tp->lat,
+            (float) $tp->lng
+        );
+
+        try {
+            return self::evaluate($config['formula'], [
+                'DISTANCE_TURNPOINT' => $distance,
+                'BASE'               => $config['base'],
+                'COEF_PLANEUR'       => $handicap,
+                'HANDICAP'           => $handicap,
+                // Valeur propre à la balise : sert aux barèmes fixes et aux
+                // bonus, que la distance seule ne permet pas d'exprimer.
+                'POINTS_BALISE'      => (float) ($tp->points ?? 0),
+            ]);
+        } catch (\RuntimeException) {
+            return 0.0;
+        }
     }
 }

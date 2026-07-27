@@ -101,7 +101,7 @@
                     <tr>
                         <th style="width:2rem">#</th>
                         <th>Point de virage</th>
-                        <th class="text-end">Points</th>
+                        <th class="text-end" title="Points rapportés, formule appliquée">Points</th>
                         <th class="text-end">Rayon</th>
                         <th class="text-center">FLARM</th>
                         <th class="text-center">IGC</th>
@@ -129,7 +129,12 @@
                     <tr class="{{ $rowClass }}">
                         <td class="text-muted">{{ $i + 1 }}</td>
                         <td class="fw-semibold">{{ $tp->name }}</td>
-                        <td class="text-end">{{ $tp->points }}</td>
+                        <td class="text-end fw-semibold" data-points="{{ $r['points'] }}">
+                            {{ $r['points'] }}
+                            @if($tp->points)
+                                <span class="text-muted small d-block">balise {{ $tp->points }}</span>
+                            @endif
+                        </td>
                         <td class="text-end text-muted">{{ number_format($tp->validationRadiusM()) }} m</td>
 
                         {{-- FLARM status --}}
@@ -198,8 +203,43 @@
                     </tr>
                     @endforeach
                 </tbody>
+                <tfoot class="table-light">
+                    <tr>
+                        <th colspan="2" class="text-end">Total des balises retenues</th>
+                        <th class="text-end fs-5" id="totalPoints">0</th>
+                        <th colspan="6"></th>
+                    </tr>
+                </tfoot>
             </table>
         </div>
+
+        <script>
+            // Le total suit les cases cochées : il annonce ce qui sera
+            // réellement enregistré, pas ce que le fichier IGC a détecté.
+            (function () {
+                const rows = Array.from(document.querySelectorAll('tbody tr'));
+                const total = document.getElementById('totalPoints');
+                if (!total) return;
+
+                function refresh() {
+                    let sum = 0;
+                    for (const row of rows) {
+                        const box = row.querySelector('input[type="checkbox"]');
+                        const cell = row.querySelector('[data-points]');
+                        if (box && box.checked && cell) {
+                            sum += parseInt(cell.dataset.points, 10) || 0;
+                        }
+                    }
+                    total.textContent = sum;
+                }
+
+                rows.forEach(row => {
+                    const box = row.querySelector('input[type="checkbox"]');
+                    if (box) box.addEventListener('change', refresh);
+                });
+                refresh();
+            })();
+        </script>
 
         <div class="card-footer d-flex justify-content-between align-items-center">
             <div class="small text-muted">
