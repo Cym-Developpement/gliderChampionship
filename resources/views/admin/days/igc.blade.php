@@ -54,7 +54,7 @@
                     <td class="text-muted">{{ $i + 1 }}</td>
                     <td>{{ $tp->name }}</td>
                     <td>{{ $tp->points }}</td>
-                    <td>{{ $tp->radius_m }} m</td>
+                    <td>{{ number_format($tp->validationRadiusM()) }} m</td>
                     <td class="text-center">
                         @if(isset($flarmIds[$tp->id]))
                             <span class="badge bg-success">✓ Validé</span>
@@ -130,7 +130,7 @@
                         <td class="text-muted">{{ $i + 1 }}</td>
                         <td class="fw-semibold">{{ $tp->name }}</td>
                         <td class="text-end">{{ $tp->points }}</td>
-                        <td class="text-end text-muted">{{ number_format($tp->radius_m) }} m</td>
+                        <td class="text-end text-muted">{{ number_format($tp->validationRadiusM()) }} m</td>
 
                         {{-- FLARM status --}}
                         <td class="text-center">
@@ -159,7 +159,7 @@
                                     <span class="text-success fw-bold">{{ number_format($distM) }} m</span>
                                 @else
                                     <span class="text-danger">{{ number_format($distM) }} m</span>
-                                    <span class="text-muted small">(rayon {{ number_format($tp->radius_m) }} m)</span>
+                                    <span class="text-muted small">(rayon {{ number_format($tp->validationRadiusM()) }} m)</span>
                                 @endif
                             @else
                                 <span class="text-muted">–</span>

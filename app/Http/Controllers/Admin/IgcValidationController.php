@@ -81,7 +81,7 @@ class IgcValidationController extends Controller
             $near = $inspector->passedNearPoint(
                 (float) $tp->lat,
                 (float) $tp->lng,
-                (float) $tp->radius_m
+                (float) $tp->validationRadiusM()
             );
 
             $distM = $near->minDistance !== null ? (int) round($near->minDistance) : null;
