@@ -73,7 +73,16 @@ Ouvrir ensuite `https://championnat.example.com/install.php` et suivre le formul
 
 L'installation des dépendances prend plusieurs minutes. Avant de lancer l'installeur, portez temporairement le délai de lecture FastCGI à 600 s dans le bloc `location ~ \.php$` (`fastcgi_read_timeout 600;`, puis `nginx -s reload`), sinon Nginx coupe la réponse en cours de route. L'installeur envoie `X-Accel-Buffering: no` pour que la progression s'affiche au fil de l'eau plutôt qu'en bloc à la fin.
 
-Si `proc_open()` est désactivée par `disable_functions`, ou si aucun binaire PHP CLI n'est trouvé, l'installeur le signale dans les prérequis : il faut alors lancer `composer install --no-dev --optimize-autoloader` à la main avant de le relancer.
+### Hébergement mutualisé (OVH, cPanel, Plesk)
+
+L'installeur fonctionne sans accès SSH. Deux contraintes propres au mutualisé sont gérées automatiquement :
+
+- **`open_basedir`** empêche de tester l'existence des binaires hors du compte : l'installeur ne teste pas les fichiers, il tente de les exécuter. Il balaie les emplacements OVH (`/usr/local/php8.x/bin/php`), CloudLinux (`/opt/alt/phpXY/…`), cPanel et Plesk, ainsi que les noms nus résolus via le `PATH`.
+- **`proc_open()` désactivée** : Composer est alors exécuté directement dans le processus PHP, en chargeant l'autoloader embarqué dans `composer.phar`. L'installation se poursuit ensuite dans une requête neuve — les classes Symfony du phar ne doivent pas cohabiter avec celles de Laravel. Cet enchaînement est automatique.
+
+Dans ce mode, `composer install` tourne avec `--no-scripts` (les scripts lanceraient `@php artisan …`, ce qui suppose un binaire CLI). Laravel reconstruit `bootstrap/cache/packages.php` à son premier démarrage : rien à faire.
+
+Seul cas réellement bloquant : ni binaire PHP CLI, ni extension `Phar`. L'installeur l'indique alors dans les prérequis, et il faut lancer `composer install --no-dev --optimize-autoloader` par un autre moyen (SSH, ou en téléversant un `vendor/` construit en local).
 
 En fin de procédure, l'installeur pose un verrou `storage/installed.lock` (il refuse de se relancer tant qu'il est présent) et propose un bouton d'auto-suppression. **Supprimez `public/install.php` dans tous les cas** : tant qu'il est en ligne, quiconque supprimant le verrou pourrait réécrire la configuration.
 

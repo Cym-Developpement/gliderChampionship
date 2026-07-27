@@ -239,7 +239,60 @@ function run_command(array $cmd, ?string $cwd = null, array $env = [], int $time
     return ['code' => $exitCode, 'output' => trim($output)];
 }
 
-/** Localise un binaire PHP en ligne de commande (PHP_BINARY vaut php-fpm sous SAPI web). */
+/**
+ * Liste des emplacements où chercher un PHP en ligne de commande.
+ *
+ * @return list<string>
+ */
+function php_binary_candidates(): array
+{
+    $current  = PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION;   // ex. 8.3
+    $compact  = PHP_MAJOR_VERSION . PHP_MINOR_VERSION;         // ex. 83
+    $versions = array_values(array_unique([$current, '8.4', '8.3', '8.2']));
+
+    $candidates = [];
+
+    if (PHP_SAPI === 'cli') {
+        $candidates[] = PHP_BINARY;
+    }
+
+    // Noms nus : résolus via le PATH par execvp, ce qui contourne open_basedir.
+    $candidates[] = 'php';
+    $candidates[] = 'php' . $current;
+    $candidates[] = 'php' . $compact;
+
+    foreach ($versions as $v) {
+        $vCompact = str_replace('.', '', $v);
+        // OVH mutualisé
+        $candidates[] = '/usr/local/php' . $v . '/bin/php';
+        // CloudLinux / alt-php
+        $candidates[] = '/opt/alt/php' . $vCompact . '/usr/bin/php';
+        // cPanel EasyApache
+        $candidates[] = '/opt/cpanel/ea-php' . $vCompact . '/root/usr/bin/php';
+        // Plesk
+        $candidates[] = '/opt/plesk/php/' . $v . '/bin/php';
+        // Remi / RHEL
+        $candidates[] = '/opt/remi/php' . $vCompact . '/root/usr/bin/php';
+    }
+
+    foreach ([PHP_BINDIR, '/usr/local/bin', '/usr/bin', '/bin'] as $dir) {
+        $candidates[] = $dir . '/php';
+        $candidates[] = $dir . '/php' . $current;
+        $candidates[] = $dir . '/php' . $compact;
+    }
+
+    return array_values(array_unique(array_filter($candidates, 'is_string')));
+}
+
+/**
+ * Localise un binaire PHP en ligne de commande.
+ *
+ * Deux pièges sur les hébergements mutualisés :
+ *  - PHP_BINARY vaut php-fpm sous SAPI web, jamais le CLI ;
+ *  - open_basedir fait échouer is_executable() sur tout chemin hors du compte,
+ *    alors même que le binaire existe et est exécutable. On ne teste donc pas
+ *    le fichier : on tente de l'exécuter et on regarde ce qu'il répond.
+ */
 function find_php_binary(): ?string
 {
     static $cached = false;
@@ -250,30 +303,15 @@ function find_php_binary(): ?string
     }
     $cached = true;
 
-    $version    = PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION;
-    $candidates = [];
-
-    if (PHP_SAPI === 'cli') {
-        $candidates[] = PHP_BINARY;
-    }
-    foreach ([
-        PHP_BINDIR,
-        '/usr/local/bin',
-        '/usr/bin',
-        '/bin',
-        '/opt/plesk/php/' . $version . '/bin',
-        '/opt/cpanel/ea-php' . PHP_MAJOR_VERSION . PHP_MINOR_VERSION . '/root/usr/bin',
-    ] as $dir) {
-        $candidates[] = $dir . '/php';
-        $candidates[] = $dir . '/php' . $version;
-        $candidates[] = $dir . '/php' . PHP_MAJOR_VERSION . PHP_MINOR_VERSION;
+    if (!can_run_commands()) {
+        return $found = null;
     }
 
-    foreach (array_unique($candidates) as $candidate) {
-        if (!is_string($candidate) || $candidate === '' || is_dir($candidate) || !@is_executable($candidate)) {
+    foreach (php_binary_candidates() as $candidate) {
+        if ($candidate === '' || @is_dir($candidate)) {
             continue;
         }
-        // Vérifie qu'il s'agit bien du binaire CLI et non de php-fpm
+        // Un php-fpm répondrait « fpm-fcgi » : seul « cli » nous intéresse.
         $probe = run_command([$candidate, '-r', 'echo PHP_SAPI;'], BASE_PATH, [], 15);
         if ($probe['code'] === 0 && str_contains($probe['output'], 'cli')) {
             return $found = $candidate;
@@ -322,8 +360,18 @@ function http_get(string $url): ?string
  *
  * @return array{ok: bool, detail: string}
  */
-function download_composer(string $phpBin): array
+function download_composer(?string $phpBin): array
 {
+    if (!is_dir(COMPOSER_HOME_DIR)) {
+        @mkdir(COMPOSER_HOME_DIR, 0775, true);
+    }
+
+    // Sans binaire CLI, l'installeur officiel (un script PHP) ne peut pas être
+    // exécuté : on télécharge directement le phar, en vérifiant son SHA-256.
+    if ($phpBin === null) {
+        return download_composer_phar_directly('aucun binaire PHP CLI disponible');
+    }
+
     $installer = http_get('https://getcomposer.org/installer');
     $signature = http_get('https://composer.github.io/installer.sig');
 
@@ -357,14 +405,31 @@ function download_composer(string $phpBin): array
         $fallbackReason = 'getcomposer.org injoignable (cURL et allow_url_fopen indisponibles ou réseau bloqué).';
     }
 
-    // Repli : téléchargement direct du phar
+    return download_composer_phar_directly($fallbackReason);
+}
+
+/** Téléchargement direct du phar, avec contrôle du SHA-256 publié. */
+function download_composer_phar_directly(string $reason): array
+{
     $phar = http_get('https://getcomposer.org/download/latest-stable/composer.phar');
-    if ($phar !== null && @file_put_contents(COMPOSER_PHAR, $phar) !== false) {
-        @chmod(COMPOSER_PHAR, 0755);
-        return ['ok' => true, 'detail' => 'composer.phar téléchargé directement (repli). Cause du repli : ' . $fallbackReason];
+    if ($phar === null) {
+        return ['ok' => false, 'detail' => 'Téléchargement de Composer impossible (' . $reason . ').'];
     }
 
-    return ['ok' => false, 'detail' => 'Téléchargement de Composer impossible. ' . $fallbackReason];
+    $sum = http_get('https://getcomposer.org/download/latest-stable/composer.phar.sha256sum');
+    if ($sum !== null) {
+        $expected = strtok(trim($sum), ' ');
+        if (is_string($expected) && strlen($expected) === 64 && !hash_equals($expected, hash('sha256', $phar))) {
+            return ['ok' => false, 'detail' => 'Empreinte SHA-256 de composer.phar invalide — téléchargement abandonné.'];
+        }
+    }
+
+    if (@file_put_contents(COMPOSER_PHAR, $phar) === false) {
+        return ['ok' => false, 'detail' => 'Écriture de composer.phar impossible à la racine du projet.'];
+    }
+    @chmod(COMPOSER_PHAR, 0755);
+
+    return ['ok' => true, 'detail' => 'composer.phar téléchargé directement, empreinte SHA-256 vérifiée (' . $reason . ').'];
 }
 
 /**
@@ -384,10 +449,6 @@ function resolve_composer(string $phpBin): array
         }
     }
 
-    if (!is_dir(COMPOSER_HOME_DIR)) {
-        @mkdir(COMPOSER_HOME_DIR, 0775, true);
-    }
-
     $download = download_composer($phpBin);
     if (!$download['ok']) {
         return ['ok' => false, 'cmd' => [], 'detail' => $download['detail']];
@@ -398,6 +459,89 @@ function resolve_composer(string $phpBin): array
         'cmd'    => [$phpBin, '-d', 'memory_limit=-1', COMPOSER_PHAR],
         'detail' => $download['detail'],
     ];
+}
+
+// ─── Composer exécuté dans le processus courant ──────────────────────────────
+
+/** L'exécution en direct de Composer suppose de pouvoir lire un phar. */
+function can_run_composer_inprocess(): bool
+{
+    return extension_loaded('Phar') && class_exists('Phar');
+}
+
+/**
+ * Lance `composer install` sans sous-processus, en chargeant l'autoloader
+ * embarqué dans composer.phar. Seule issue quand proc_open() est désactivée
+ * ou qu'aucun binaire PHP CLI n'est joignable (mutualisé type OVH).
+ *
+ * `--no-scripts` est imposé : les scripts post-autoload-dump lanceraient
+ * `@php artisan …`, ce qui exige justement un binaire CLI. Laravel reconstruit
+ * de toute façon bootstrap/cache/packages.php à son premier démarrage.
+ *
+ * @return array{ok: bool, detail: string}
+ */
+function composer_install_inprocess(callable $onOutput): array
+{
+    if (!can_run_composer_inprocess()) {
+        return ['ok' => false, 'detail' => 'Extension Phar indisponible : Composer ne peut pas être exécuté dans le processus PHP.'];
+    }
+    if (!is_file(COMPOSER_PHAR)) {
+        return ['ok' => false, 'detail' => 'composer.phar introuvable.'];
+    }
+
+    $autoload = 'phar://' . COMPOSER_PHAR . '/vendor/autoload.php';
+    if (!@file_exists($autoload)) {
+        return ['ok' => false, 'detail' => 'Archive composer.phar illisible (phar:// bloqué ?).'];
+    }
+
+    @ini_set('memory_limit', '-1');
+    @putenv('COMPOSER_HOME=' . COMPOSER_HOME_DIR);
+    @putenv('COMPOSER_NO_INTERACTION=1');
+    @putenv('COMPOSER_ALLOW_SUPERUSER=1');
+    @putenv('COMPOSER_DISABLE_XDEBUG_WARN=1');
+
+    try {
+        require_once $autoload;
+
+        if (!class_exists(\Composer\Console\Application::class)) {
+            return ['ok' => false, 'detail' => 'Classes Composer introuvables dans l\'archive.'];
+        }
+
+        // Sortie console redirigée vers l'affichage en direct de l'installeur.
+        $output = new class($onOutput) extends \Symfony\Component\Console\Output\Output {
+            public function __construct(private $sink)
+            {
+                parent::__construct(self::VERBOSITY_NORMAL, false);
+            }
+
+            protected function doWrite(string $message, bool $newline): void
+            {
+                ($this->sink)($message . ($newline ? PHP_EOL : ''));
+            }
+        };
+
+        $application = new \Composer\Console\Application();
+        $application->setAutoExit(false);
+
+        $code = $application->run(new \Symfony\Component\Console\Input\ArrayInput([
+            'command'               => 'install',
+            '--working-dir'         => BASE_PATH,
+            '--no-dev'              => true,
+            '--optimize-autoloader' => true,
+            '--no-interaction'      => true,
+            '--no-progress'         => true,
+            '--no-scripts'          => true,
+            '--prefer-dist'         => true,
+        ]), $output);
+    } catch (\Throwable $ex) {
+        return ['ok' => false, 'detail' => get_class($ex) . ' : ' . $ex->getMessage()];
+    }
+
+    if ($code !== 0 || !is_file(VENDOR_AUTOLOAD)) {
+        return ['ok' => false, 'detail' => 'composer install a échoué (code ' . $code . ').'];
+    }
+
+    return ['ok' => true, 'detail' => 'Dépendances installées sans sous-processus.'];
 }
 
 // ─── Vérifications système ───────────────────────────────────────────────────
@@ -432,22 +576,34 @@ function system_checks(): array
         'fatal' => false,
     ];
 
-    // Ces trois points ne sont bloquants que s'il faut réellement lancer Composer.
+    // Ces points ne sont bloquants que s'il faut réellement lancer Composer.
     $needsComposer = !$vendorReady;
+    $inProcess     = can_run_composer_inprocess();   // repli sans sous-processus
+    $suffix        = $needsComposer ? '' : ' — non requis';
 
     $checks[] = [
-        'label' => 'Exécution de commandes (proc_open)' . ($needsComposer ? '' : ' — non requis'),
-        'ok'    => can_run_commands(),
-        'value' => can_run_commands() ? 'autorisée' : 'désactivée (disable_functions)',
-        'fatal' => $needsComposer,
+        'label' => 'Extension Phar' . $suffix,
+        'ok'    => $inProcess,
+        'value' => $inProcess ? 'chargée' : 'absente',
+        'fatal' => false,
     ];
 
-    $phpBin = can_run_commands() ? find_php_binary() : null;
     $checks[] = [
-        'label' => 'Binaire PHP en ligne de commande' . ($needsComposer ? '' : ' — non requis'),
-        'ok'    => $phpBin !== null,
-        'value' => $phpBin ?? 'introuvable',
-        'fatal' => $needsComposer,
+        'label' => 'Exécution de commandes (proc_open)' . $suffix,
+        'ok'    => can_run_commands() || $inProcess,
+        'value' => can_run_commands()
+            ? 'autorisée'
+            : ($inProcess ? 'désactivée — repli sur Composer en processus' : 'désactivée (disable_functions)'),
+        'fatal' => $needsComposer && !$inProcess,
+    ];
+
+    $phpBin = find_php_binary();
+    $checks[] = [
+        'label' => 'Binaire PHP en ligne de commande' . $suffix,
+        'ok'    => $phpBin !== null || $inProcess,
+        'value' => $phpBin
+            ?? ($inProcess ? 'introuvable — Composer sera exécuté dans le processus PHP' : 'introuvable'),
+        'fatal' => $needsComposer && !$inProcess,
     ];
 
     $composerFound = is_file(COMPOSER_PHAR) || is_file('/usr/local/bin/composer') || is_file('/usr/bin/composer');
@@ -566,13 +722,55 @@ function build_env(array $cfg): string
     return implode(PHP_EOL, $lines);
 }
 
+// ─── Reprise dans une requête neuve ──────────────────────────────────────────
+
+/**
+ * Quand Composer tourne dans le processus courant, il charge sa propre copie de
+ * symfony/console depuis le phar. Poursuivre l'installation dans la foulée
+ * ferait cohabiter ces classes avec celles de Laravel : on sauvegarde donc la
+ * configuration et on relance l'installeur dans une requête vierge.
+ */
+function store_resume_state(array $cfg): ?string
+{
+    if (!is_dir(COMPOSER_HOME_DIR) && !@mkdir(COMPOSER_HOME_DIR, 0775, true)) {
+        return null;
+    }
+
+    $cfg['force_composer'] = false;   // évite de reboucler sur l'étape Composer
+    $token = bin2hex(random_bytes(16));
+    $path  = BASE_PATH . '/storage/app/private/installer-resume-' . $token . '.json';
+
+    if (@file_put_contents($path, json_encode($cfg)) === false) {
+        return null;
+    }
+    @chmod($path, 0600);
+
+    return $token;
+}
+
+/** Relit puis supprime l'état de reprise. */
+function load_resume_state(string $token): ?array
+{
+    if (!preg_match('/^[0-9a-f]{32}$/', $token)) {
+        return null;
+    }
+    $path = BASE_PATH . '/storage/app/private/installer-resume-' . $token . '.json';
+    if (!is_file($path)) {
+        return null;
+    }
+    $cfg = json_decode((string) @file_get_contents($path), true);
+    @unlink($path);
+
+    return is_array($cfg) ? $cfg : null;
+}
+
 // ─── Étapes d'installation ───────────────────────────────────────────────────
 
 /**
  * Exécute l'installation en diffusant chaque étape au navigateur.
- * Renvoie true si toutes les étapes bloquantes ont réussi.
+ * Renvoie ['status' => 'ok'|'failed'|'resume', 'token' => ?string].
  */
-function run_install(array $cfg): bool
+function run_install(array $cfg): array
 {
     // 1. Connexion à la base de données
     step_open('db', 'Connexion à la base de données');
@@ -583,7 +781,7 @@ function run_install(array $cfg): bool
                 step_output('db', "Création de {$sqlitePath}\n");
                 if (!touch($sqlitePath)) {
                     step_close('db', false, 'Fichier non créable — vérifiez les droits sur database/');
-                    return false;
+                    return ['status' => 'failed'];
                 }
             }
             @chmod($sqlitePath, 0664);
@@ -596,49 +794,78 @@ function run_install(array $cfg): bool
         }
     } catch (Throwable $ex) {
         step_close('db', false, $ex->getMessage());
-        return false;
+        return ['status' => 'failed'];
     }
 
     // 2. Dépendances Composer
     if (!is_file(VENDOR_AUTOLOAD) || $cfg['force_composer']) {
         step_open('php', 'Recherche du binaire PHP en ligne de commande');
         $phpBin = find_php_binary();
-        if ($phpBin === null) {
-            step_close('php', false, "Introuvable.\nLancez manuellement à la racine du projet :\n  composer install --no-dev --optimize-autoloader");
-            return false;
+        if ($phpBin !== null) {
+            step_close('php', true, $phpBin);
+        } else {
+            step_close('php', true, "Aucun binaire CLI joignable (fréquent en mutualisé).\n"
+                . 'Composer sera exécuté directement dans le processus PHP.');
         }
-        step_close('php', true, $phpBin);
 
         step_open('composer', 'Mise à disposition de Composer');
-        $composer = resolve_composer($phpBin);
+        if ($phpBin !== null) {
+            $composer = resolve_composer($phpBin);
+        } else {
+            if (!can_run_composer_inprocess()) {
+                step_close('composer', false,
+                    "Ni binaire PHP CLI, ni extension Phar : impossible d'installer les dépendances depuis le navigateur.\n"
+                    . "Lancez à la racine du projet :\n  composer install --no-dev --optimize-autoloader");
+                return ['status' => 'failed'];
+            }
+            $composer = is_file(COMPOSER_PHAR)
+                ? ['ok' => true, 'cmd' => [], 'detail' => 'Composer trouvé : ' . COMPOSER_PHAR]
+                : download_composer(null) + ['cmd' => []];
+        }
         if (!$composer['ok']) {
             step_close('composer', false, $composer['detail']);
-            return false;
+            return ['status' => 'failed'];
         }
         step_close('composer', true, $composer['detail']);
 
-        if (!is_dir(COMPOSER_HOME_DIR)) {
-            @mkdir(COMPOSER_HOME_DIR, 0775, true);
-        }
-
         step_open('deps', 'composer install --no-dev --optimize-autoloader');
         step_output('deps', "Téléchargement des dépendances, cela peut prendre plusieurs minutes…\n\n");
-        $install = run_command(
-            array_merge($composer['cmd'], [
-                'install', '--no-dev', '--optimize-autoloader',
-                '--no-interaction', '--no-progress', '--prefer-dist',
-            ]),
-            BASE_PATH,
-            [],
-            900,
-            fn(string $chunk) => step_output('deps', $chunk)   // sortie Composer en direct
-        );
 
-        if ($install['code'] !== 0 || !is_file(VENDOR_AUTOLOAD)) {
-            step_close('deps', false, "\nÉchec (code " . $install['code'] . ').');
-            return false;
+        if ($phpBin !== null) {
+            $install = run_command(
+                array_merge($composer['cmd'], [
+                    'install', '--no-dev', '--optimize-autoloader',
+                    '--no-interaction', '--no-progress', '--prefer-dist',
+                ]),
+                BASE_PATH,
+                [],
+                900,
+                fn(string $chunk) => step_output('deps', $chunk)   // sortie Composer en direct
+            );
+
+            if ($install['code'] !== 0 || !is_file(VENDOR_AUTOLOAD)) {
+                step_close('deps', false, "\nÉchec (code " . $install['code'] . ').');
+                return ['status' => 'failed'];
+            }
+            step_close('deps', true, "\nDépendances installées.");
+        } else {
+            // Exécution dans le processus courant
+            $result = composer_install_inprocess(fn(string $chunk) => step_output('deps', $chunk));
+            if (!$result['ok']) {
+                step_close('deps', false, "\n" . $result['detail']);
+                return ['status' => 'failed'];
+            }
+            step_close('deps', true, "\n" . $result['detail']);
+
+            // Le processus est « pollué » par les classes du phar : on reprend à neuf.
+            $token = store_resume_state($cfg);
+            if ($token === null) {
+                step_open('resume', 'Reprise de l\'installation');
+                step_close('resume', false, 'Impossible d\'enregistrer l\'état de reprise dans storage/app/private.');
+                return ['status' => 'failed'];
+            }
+            return ['status' => 'resume', 'token' => $token];
         }
-        step_close('deps', true, "\nDépendances installées.");
     } else {
         step_open('deps', 'Dépendances Composer');
         step_close('deps', true, 'vendor/ déjà présent — installation ignorée');
@@ -654,7 +881,7 @@ function run_install(array $cfg): bool
     }
     if (file_put_contents($envPath, build_env($cfg)) === false) {
         step_close('env', false, 'Écriture impossible dans ' . $envPath);
-        return false;
+        return ['status' => 'failed'];
     }
     @chmod($envPath, 0640);
     step_close('env', true, 'APP_KEY générée, APP_DEBUG=false');
@@ -674,7 +901,7 @@ function run_install(array $cfg): bool
         step_close('boot', true, 'Laravel ' . $app->version());
     } catch (Throwable $ex) {
         step_close('boot', false, $ex->getMessage());
-        return false;
+        return ['status' => 'failed'];
     }
 
     // 6. Migrations
@@ -685,7 +912,7 @@ function run_install(array $cfg): bool
         step_close('migrate', true, $output !== '' ? $output : 'aucune migration en attente');
     } catch (Throwable $ex) {
         step_close('migrate', false, $ex->getMessage());
-        return false;
+        return ['status' => 'failed'];
     }
 
     // 7. Compte administrateur
@@ -701,7 +928,7 @@ function run_install(array $cfg): bool
         step_close('admin', true, $cfg['admin_email']);
     } catch (Throwable $ex) {
         step_close('admin', false, $ex->getMessage());
-        return false;
+        return ['status' => 'failed'];
     }
 
     // 8. Lien symbolique de stockage (le lien livré pointe vers un chemin de développement)
@@ -761,7 +988,7 @@ function run_install(array $cfg): bool
         step_close('lock', true, 'storage/installed.lock');
     }
 
-    return true;
+    return ['status' => 'ok'];
 }
 
 // ─── Routage du script ───────────────────────────────────────────────────────
@@ -808,7 +1035,26 @@ if ($locked && $action !== 'selfdestruct') {
     exit;
 }
 
-if ($action === 'install') {
+// Reprise après un composer install exécuté dans le processus courant
+$resumed = false;
+if ($action === 'install' && post('resume_token') !== '') {
+    $saved = load_resume_state(post('resume_token'));
+    if ($saved === null) {
+        render_page(function () { ?>
+            <div class="alert alert-danger">
+                <h5 class="alert-heading">Reprise impossible</h5>
+                <p class="mb-0">Le jeton de reprise est invalide ou a expiré. Relancez l'installeur :
+                    les dépendances déjà installées seront conservées.</p>
+            </div>
+            <a href="install.php" class="btn btn-primary">Retour au formulaire</a>
+        <?php });
+        exit;
+    }
+    $cfg     = $saved;
+    $resumed = true;
+}
+
+if ($action === 'install' && !$resumed) {
     $cfg = [
         'app_name'       => post('app_name', 'Glider Championship'),
         'app_url'        => rtrim(post('app_url'), '/'),
@@ -849,25 +1095,51 @@ if ($action === 'install') {
         $errors[] = 'Nom de base et utilisateur MySQL requis.';
     }
 
-    if (!$errors) {
-        stream_begin();
-        page_head();
-
-        echo '<div class="alert alert-info d-flex align-items-center gap-2" id="running">'
-            . '<div class="spinner-border spinner-border-sm" role="status"></div>'
-            . '<div>Installation en cours — ne fermez pas cette page.</div></div>';
-        echo '<ul class="list-group mb-4">';
-        stream_flush();
-
-        $ok = run_install($cfg);
-
-        echo '</ul>';
-        echo '<script>document.getElementById("running").remove();</script>';
-        render_outcome($ok);
-        page_foot();
-        exit;
-    }
 }
+
+if ($action === 'install' && !$errors) {
+    stream_begin();
+    page_head();
+
+    echo '<div class="alert alert-info d-flex align-items-center gap-2" id="running">'
+        . '<div class="spinner-border spinner-border-sm" role="status"></div>'
+        . '<div>' . ($resumed ? 'Reprise de l\'installation' : 'Installation en cours')
+        . ' — ne fermez pas cette page.</div></div>';
+    echo '<ul class="list-group mb-4">';
+    stream_flush();
+
+    $outcome = run_install($cfg);
+
+    echo '</ul>';
+    echo '<script>document.getElementById("running").remove();</script>';
+
+    if ($outcome['status'] === 'resume') {
+        render_resume($outcome['token']);
+    } else {
+        render_outcome($outcome['status'] === 'ok');
+    }
+
+    page_foot();
+    exit;
+}
+
+/** Écran intermédiaire : relance l'installeur dans une requête vierge. */
+function render_resume(string $token): void
+{ ?>
+    <div class="alert alert-info">
+        <h5 class="alert-heading">Dépendances installées</h5>
+        <p class="mb-0">
+            Composer ayant été exécuté dans le processus PHP, l'installation se poursuit
+            automatiquement dans une nouvelle requête…
+        </p>
+    </div>
+    <form method="post" id="resumeForm">
+        <input type="hidden" name="action" value="install">
+        <input type="hidden" name="resume_token" value="<?= e($token) ?>">
+        <button class="btn btn-primary">Poursuivre l'installation</button>
+    </form>
+    <script>setTimeout(function(){ document.getElementById('resumeForm').submit(); }, 1200);</script>
+<?php }
 
 /** Bloc final affiché une fois toutes les étapes diffusées. */
 function render_outcome(bool $ok): void
