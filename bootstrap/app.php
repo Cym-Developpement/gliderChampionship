@@ -12,6 +12,12 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->redirectGuestsTo('/admin/login');
+
+        // GitHub ne peut pas fournir de jeton CSRF ; la requête est authentifiée
+        // par la signature HMAC de l'en-tête X-Hub-Signature-256.
+        $middleware->validateCsrfTokens(except: [
+            'webhook/github',
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //

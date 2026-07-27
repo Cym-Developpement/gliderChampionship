@@ -225,6 +225,57 @@ php artisan up
 
 ---
 
+## 6 bis. Déploiement automatique par webhook GitHub
+
+`POST /webhook/github` déclenche `git pull` + `composer install` (si `composer.lock` a changé) + `migrate --force` + régénération des caches.
+
+### Côté serveur
+
+Le répertoire doit être un clone git dont la branche suit `origin/main`, et l'utilisateur du serveur web doit pouvoir y écrire :
+
+```bash
+sudo -u www-data git -C /var/www/glider status
+sudo -u www-data git -C /var/www/glider config pull.ff only
+```
+
+Dans `.env` :
+
+```dotenv
+GITHUB_DEPLOY_ENABLED=true
+GITHUB_WEBHOOK_SECRET=<chaîne aléatoire, ex. `openssl rand -hex 32`>
+GITHUB_DEPLOY_BRANCH=main
+```
+
+Sans `GITHUB_WEBHOOK_SECRET`, la route répond 503 : aucun déploiement anonyme n'est possible.
+
+### Côté GitHub
+
+*Settings → Webhooks → Add webhook* :
+
+| Champ | Valeur |
+|---|---|
+| Payload URL | `https://championnat.example.com/webhook/github` |
+| Content type | `application/json` |
+| Secret | la valeur de `GITHUB_WEBHOOK_SECRET` |
+| Événements | *Just the push event* |
+
+### Comportement
+
+- La requête est authentifiée par la signature HMAC SHA-256 (`X-Hub-Signature-256`) comparée en temps constant ; la route est exclue de la protection CSRF et limitée à 30 requêtes/minute.
+- `ping` répond 200, un push sur une autre branche est ignoré, un push sur la branche configurée répond **202 immédiatement** puis déploie une fois la réponse envoyée — GitHub coupe à 10 s, un déploiement dure plus longtemps.
+- Un verrou `flock` sur `storage/app/private/deploy.lock` empêche deux déploiements simultanés.
+- Tout est journalisé dans `storage/logs/deploy-AAAA-MM-JJ.log` (rotation 30 jours), y compris les signatures rejetées.
+- `composer install` n'est relancé que si `composer.lock` ou `composer.json` figurent dans le diff du pull.
+- `config:cache` reste exclu, pour la raison exposée en §6.
+
+### Limites
+
+- **`proc_open()` doit être autorisée** pour lancer `git`. Sur un mutualisé qui la désactive, le webhook échoue au premier pas et le journal l'indique explicitement. C'est le cas le plus probable sur OVH mutualisé : préférez alors un workflow GitHub Actions qui pousse les fichiers en FTP/SSH.
+- Sans binaire PHP CLI, les commandes Artisan basculent en exécution dans le processus courant et `composer install` est ignoré avec un avertissement dans le journal — le code est à jour mais `vendor/` peut être en retard.
+- Les migrations sont appliquées sans sauvegarde préalable. Pendant une épreuve, laissez `GITHUB_DEPLOY_ENABLED=false`.
+
+---
+
 ## 7. Nginx
 
 `/etc/nginx/sites-available/glider` :

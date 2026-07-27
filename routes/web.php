@@ -64,6 +64,11 @@ Route::prefix('admin')->middleware('auth')->group(function () {
     Route::post('ogn-assign', [OgnAssignController::class, 'store'])->name('admin.ogn-assign.store');
 });
 
+// Déploiement automatique — authentifié par signature HMAC, pas par session
+Route::post('/webhook/github', \App\Http\Controllers\GithubWebhookController::class)
+    ->middleware('throttle:30,1')
+    ->name('webhook.github');
+
 Route::get('/api/ogn/positions', [\App\Http\Controllers\OgnController::class, 'positions']);
 Route::get('/positions', [\App\Http\Controllers\OgnController::class, 'positions']);
 Route::get('/api/competition', [\App\Http\Controllers\ApiController::class, 'competition']);

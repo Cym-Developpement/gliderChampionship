@@ -127,6 +127,14 @@ return [
             'path' => storage_path('logs/laravel.log'),
         ],
 
+        'deploy' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/deploy.log'),
+            'level' => 'info',
+            'days' => 30,
+            'replace_placeholders' => true,
+        ],
+
         'ogn' => [
             'driver' => 'daily',
             'path' => storage_path('logs/ogn.log'),
