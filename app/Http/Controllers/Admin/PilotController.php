@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Competition;
 use App\Models\Pilot;
+use App\Services\CsvImporter;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 
@@ -13,7 +14,8 @@ class PilotController extends Controller
     public function index()
     {
         $pilots = Pilot::with('competition')->orderBy('name')->paginate(20);
-        return view('admin.pilots.index', compact('pilots'));
+        $competitions = Competition::orderBy('id')->get();
+        return view('admin.pilots.index', compact('pilots', 'competitions'));
     }
 
     public function create()
@@ -67,6 +69,64 @@ class PilotController extends Controller
         $pilot->update($data);
 
         return redirect()->route('admin.pilots.index')->with('success', 'Pilote mis à jour.');
+    }
+
+    /**
+     * Import de pilotes depuis un export CSV d'inscriptions.
+     *
+     * Format attendu : séparateur « ; », guillemets pour les champs contenant
+     * un séparateur, et une ligne d'en-tête contenant au moins « Nom » et
+     * « Prénom ». Les autres colonnes sont ignorées.
+     */
+    public function import(Request $request)
+    {
+        $request->validate([
+            'csv'            => 'required|file|max:2048',
+            'competition_id' => 'required|exists:competitions,id',
+        ], [], [
+            'csv' => 'fichier CSV',
+        ]);
+
+        $rows = CsvImporter::read($request->file('csv')->getRealPath(), ['nom', 'prenom']);
+
+        if ($rows === null) {
+            return back()->withErrors(['csv' => "En-tête illisible : les colonnes « Nom » et « Prénom » sont introuvables."]);
+        }
+
+        $competitionId = (int) $request->input('competition_id');
+        $created = 0;
+        $skipped = 0;
+        $invalid = 0;
+
+        foreach ($rows as $row) {
+            $name = CsvImporter::personName($row['prenom'] ?? '', $row['nom'] ?? '');
+
+            if ($name === '') {
+                $invalid++;
+                continue;
+            }
+
+            // Rapprochement insensible à la casse, dans la compétition visée.
+            $exists = Pilot::where('competition_id', $competitionId)
+                ->whereRaw('LOWER(name) = ?', [mb_strtolower($name)])
+                ->exists();
+
+            if ($exists) {
+                $skipped++;
+                continue;
+            }
+
+            Pilot::create([
+                'competition_id' => $competitionId,
+                'name'           => $name,
+            ]);
+            $created++;
+        }
+
+        $message = "Import terminé : {$created} pilote(s) créé(s), {$skipped} déjà présent(s)";
+        $message .= $invalid > 0 ? ", {$invalid} ligne(s) sans nom exploitable." : '.';
+
+        return redirect()->route('admin.pilots.index')->with('success', $message);
     }
 
     public function destroy(Pilot $pilot)

@@ -38,9 +38,11 @@ Route::prefix('admin')->middleware('auth')->group(function () {
     Route::get('/', [DashboardController::class, 'index'])->name('admin.dashboard');
 
     Route::resource('pilots', PilotController::class)->names('admin.pilots')->except('show');
+    Route::post('pilots/import', [PilotController::class, 'import'])->name('admin.pilots.import');
     Route::resource('turnpoints', TurnpointController::class)->names('admin.turnpoints')->except('show');
     Route::post('turnpoints/import-cup', [TurnpointController::class, 'importCup'])->name('admin.turnpoints.import-cup');
     Route::resource('participants', ParticipantController::class)->names('admin.participants')->except('show');
+    Route::post('participants/import', [ParticipantController::class, 'import'])->name('admin.participants.import');
 
     Route::get('/competition', [CompetitionController::class, 'edit'])->name('admin.competition.edit');
     Route::put('/competition', [CompetitionController::class, 'update'])->name('admin.competition.update');
