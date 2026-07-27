@@ -108,10 +108,10 @@
 
 <div id="slideshow">
     <div class="slide active" id="slide-day">
-        <iframe src="/podium" scrolling="no"></iframe>
+        <iframe src="{{ url('/podium') }}" scrolling="no"></iframe>
     </div>
     <div class="slide" id="slide-general">
-        <iframe src="/podium-general" scrolling="no"></iframe>
+        <iframe src="{{ url('/podium-general') }}" scrolling="no"></iframe>
     </div>
 </div>
 

@@ -130,12 +130,12 @@ let totalRanked = 0; // nombre total de participants classés
 function buildRotatedIcon(angleDeg, rank, noRank) {
     const angle = Number.isFinite(angleDeg) ? angleDeg : 0;
     if (noRank) {
-        const html = `<img src="/markers/marker_no_classement.png" width="82" height="75" style="transform: rotate(${angle}deg); transform-origin: 50% 50%;" alt="glider"/>`;
+        const html = `<img src="${BASE}/markers/marker_no_classement.png" width="82" height="75" style="transform: rotate(${angle}deg); transform-origin: 50% 50%;" alt="glider"/>`;
         return L.divIcon({ className: 'glider-div-icon', html, iconSize: [82, 75], iconAnchor: [41, 38] });
     }
     const isLast = rank && totalRanked > 1 && rank === totalRanked;
     const markerNum = (rank && rank >= 1 && rank <= 50) ? rank : null;
-    const src = isLast ? '/markers/marker_last.png' : (markerNum ? `/markers/marker_${markerNum}.png` : '/glider.png');
+    const src = isLast ? `${BASE}/markers/marker_last.png` : (markerNum ? `${BASE}/markers/marker_${markerNum}.png` : `${BASE}/glider.png`);
     const html = `<img src="${src}" width="82" height="75" style="transform: rotate(${angle}deg); transform-origin: 50% 50%;" alt="glider"/>`;
     return L.divIcon({
         className: 'glider-div-icon',
@@ -359,7 +359,7 @@ function renderPilotRanking(live) {
         item.className = 'list-group-item list-group-item-action d-flex justify-content-between align-items-center';
         const label = p.callsign ? `${p.name} (${p.callsign})` : p.name;
         const sub = [p.reg, p.gliderBrand, p.gliderModel].filter(Boolean).join(' · ');
-        const avatar = `<img src="${p.photoUrl || '/pilote-picture.png'}" class="rounded-circle me-2" width="28" height="28" alt="${label}" style="object-fit:cover;"/>`;
+        const avatar = `<img src="${p.photoUrl || BASE + '/pilote-picture.png'}" class="rounded-circle me-2" width="28" height="28" alt="${label}" style="object-fit:cover;"/>`;
         // Récupérer télémétrie via reg -> participantId -> participantIdToLastPos
         const regKey = p.reg ? normalizeReg(p.reg) : '';
         let alt = null, gs = null, climb = null;
