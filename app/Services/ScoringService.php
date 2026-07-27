@@ -24,9 +24,13 @@ class ScoringService
     }
 
     /**
-     * Evaluate a math formula string with variable substitution.
-     * Supports: +, -, *, /, parentheses, decimal numbers.
-     * No eval() — uses a recursive descent parser.
+     * Évalue une formule après substitution des variables.
+     *
+     * Opérateurs : + - * / ( ), comparaisons < <= > >= == != et condition ternaire
+     * « cond ? a : b », qui permet d'exprimer un barème par paliers. Une
+     * comparaison vaut 1 ou 0, et toute valeur non nulle est vraie.
+     *
+     * Pas de eval() : analyse par descente récursive.
      */
     public static function evaluate(string $formula, array $variables): float
     {
@@ -47,10 +51,26 @@ class ScoringService
                 $i++;
                 continue;
             }
-            if ($ch === '(' || $ch === ')' || $ch === '+' || $ch === '*' || $ch === '/') {
+            if ($ch === '(' || $ch === ')' || $ch === '+' || $ch === '*' || $ch === '/'
+                || $ch === '?' || $ch === ':') {
                 $tokens[] = $ch;
                 $i++;
                 continue;
+            }
+            // Comparaisons, à deux caractères d'abord pour ne pas couper <= en <
+            if ($ch === '<' || $ch === '>' || $ch === '=' || $ch === '!') {
+                $two = substr($formula, $i, 2);
+                if (in_array($two, ['<=', '>=', '==', '!='], true)) {
+                    $tokens[] = $two;
+                    $i += 2;
+                    continue;
+                }
+                if ($ch === '<' || $ch === '>') {
+                    $tokens[] = $ch;
+                    $i++;
+                    continue;
+                }
+                throw new \RuntimeException("Opérateur incomplet « {$ch} » — utilisez == ou !=");
             }
             // Handle minus: could be unary negative or subtraction
             if ($ch === '-') {
@@ -72,13 +92,64 @@ class ScoringService
         }
 
         $pos = 0;
-        $result = self::parseExpression($tokens, $pos);
+        $result = self::parseTernary($tokens, $pos);
 
         if ($pos < count($tokens)) {
             throw new \RuntimeException('Unexpected token after expression end');
         }
 
         return $result;
+    }
+
+    /** cond ? valeurSiVrai : valeurSinon — associatif à droite, donc chaînable. */
+    private static function parseTernary(array &$tokens, int &$pos): float
+    {
+        $condition = self::parseComparison($tokens, $pos);
+
+        if ($pos >= count($tokens) || $tokens[$pos] !== '?') {
+            return $condition;
+        }
+        $pos++;
+
+        $ifTrue = self::parseTernary($tokens, $pos);
+
+        if ($pos >= count($tokens) || $tokens[$pos] !== ':') {
+            throw new \RuntimeException('« : » manquant dans la condition ternaire');
+        }
+        $pos++;
+
+        $ifFalse = self::parseTernary($tokens, $pos);
+
+        // Toute valeur non nulle est vraie, à la tolérance des flottants près.
+        return abs($condition) > 1e-9 ? $ifTrue : $ifFalse;
+    }
+
+    /** Une comparaison rend 1 ou 0, ce qui la rend combinable avec l'arithmétique. */
+    private static function parseComparison(array &$tokens, int &$pos): float
+    {
+        $left = self::parseExpression($tokens, $pos);
+
+        $operators = ['<', '<=', '>', '>=', '==', '!='];
+        if ($pos >= count($tokens) || !is_string($tokens[$pos]) || !in_array($tokens[$pos], $operators, true)) {
+            return $left;
+        }
+
+        $operator = $tokens[$pos];
+        $pos++;
+        $right = self::parseExpression($tokens, $pos);
+
+        $equal = abs($left - $right) <= 1e-9;   // égalité de flottants tolérante
+
+        $result = match ($operator) {
+            '<'  => $left < $right && !$equal,
+            '<=' => $left < $right || $equal,
+            '>'  => $left > $right && !$equal,
+            '>=' => $left > $right || $equal,
+            '==' => $equal,
+            '!=' => !$equal,
+        };
+
+        return $result ? 1.0 : 0.0;
     }
 
     private static function parseExpression(array &$tokens, int &$pos): float
@@ -134,7 +205,9 @@ class ScoringService
 
         if ($token === '(') {
             $pos++;
-            $value = self::parseExpression($tokens, $pos);
+            // parseTernary et non parseExpression : une parenthèse doit pouvoir
+            // contenir une condition, ce qui rend les paliers imbricables.
+            $value = self::parseTernary($tokens, $pos);
             if ($pos >= count($tokens) || $tokens[$pos] !== ')') {
                 throw new \RuntimeException('Missing closing parenthesis');
             }
@@ -195,6 +268,9 @@ class ScoringService
                 'BASE' => $base,
                 'COEF_PLANEUR' => $handicap,
                 'HANDICAP' => $handicap,
+                // Valeur propre à la balise : sert aux barèmes fixes et aux
+                // bonus, que la distance seule ne permet pas d'exprimer.
+                'POINTS_BALISE' => (float) ($tp->points ?? 0),
             ];
 
             try {
