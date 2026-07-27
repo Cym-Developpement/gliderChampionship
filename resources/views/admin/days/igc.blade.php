@@ -95,6 +95,43 @@
             </div>
         </div>
 
+        @isset($altitudes)
+            <div class="card-body border-bottom">
+                <div class="row g-3 align-items-center">
+                    <div class="col-md-3">
+                        <div class="text-muted small">Altitude du terrain</div>
+                        <div class="fs-5">{{ $altitudes['ground'] !== null ? number_format($altitudes['ground']) . ' m' : '—' }}</div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="text-muted small">
+                            Hauteur la plus basse
+                            <span title="Décollage et atterrissage exclus">hors décollage et atterrissage</span>
+                        </div>
+                        <div class="fs-5 {{ $altitudes['min_height'] !== null && $altitudes['min_height'] <= $altitudes['threshold'] ? 'text-danger fw-bold' : '' }}">
+                            {{ $altitudes['min_height'] !== null ? number_format($altitudes['min_height']) . ' m' : '—' }}
+                            @if($altitudes['min_at'])
+                                <span class="text-muted small">à {{ \Carbon\Carbon::parse($altitudes['min_at'])->format('H:i:s') }}</span>
+                            @endif
+                        </div>
+                    </div>
+                    <div class="col-md-5">
+                        @if($altitudes['vache_at'])
+                            <div class="alert alert-danger mb-0 py-2">
+                                <strong>Vache présumée</strong> à
+                                {{ \Carbon\Carbon::parse($altitudes['vache_at'])->format('H:i:s') }} —
+                                passage sous {{ number_format($altitudes['threshold']) }} m.
+                                Les balises franchies ensuite ne sont pas comptées.
+                            </div>
+                        @else
+                            <div class="alert alert-success mb-0 py-2">
+                                Jamais descendu sous {{ number_format($altitudes['threshold']) }} m en vol.
+                            </div>
+                        @endif
+                    </div>
+                </div>
+            </div>
+        @endisset
+
         <div class="card-body p-0">
             <table class="table table-sm align-middle mb-0">
                 <thead class="table-light">
@@ -117,8 +154,10 @@
                         $flarmOk    = $r['flarm'];
                         $igcOk      = $r['igc'];
                         $distM      = $r['distance_m'];
-                        // Include if IGC-validated (default on), or already FLARM (already in DB, no need to re-add)
-                        $shouldInclude = $igcOk;
+                        // Validée par l'IGC, sauf si franchie après la vache :
+                        // le vol était alors terminé.
+                        $afterVache    = $r['after_vache'] ?? false;
+                        $shouldInclude = $igcOk && !$afterVache;
                         $rowClass = match(true) {
                             $igcOk && $flarmOk  => '',
                             $igcOk && !$flarmOk => 'table-success',
@@ -128,7 +167,12 @@
                     @endphp
                     <tr class="{{ $rowClass }}">
                         <td class="text-muted">{{ $i + 1 }}</td>
-                        <td class="fw-semibold">{{ $tp->name }}</td>
+                        <td class="fw-semibold">
+                            {{ $tp->name }}
+                            @if($afterVache)
+                                <span class="badge bg-danger ms-1" title="Franchie après la vache">après vache</span>
+                            @endif
+                        </td>
                         <td class="text-end fw-semibold" data-points="{{ $r['points'] }}">
                             {{ $r['points'] }}
                             @if($tp->points)
@@ -205,38 +249,84 @@
                 </tbody>
                 <tfoot class="table-light">
                     <tr>
-                        <th colspan="2" class="text-end">Total des balises retenues</th>
-                        <th class="text-end fs-5" id="totalPoints">0</th>
+                        <th colspan="2" class="text-end">Balises retenues</th>
+                        <th class="text-end" id="basePoints">0</th>
                         <th colspan="6"></th>
                     </tr>
                 </tfoot>
             </table>
         </div>
 
+        <div class="card-body border-top">
+            <div class="row g-3 align-items-end">
+                <div class="col-md-4">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" name="vache" id="vache" value="1"
+                               @checked(isset($altitudes) && $altitudes['vache_at'])>
+                        <label class="form-check-label" for="vache">
+                            <strong>Vaché</strong> — diviser les points par 2
+                        </label>
+                    </div>
+                    @if(isset($altitudes) && $altitudes['vache_at'])
+                        <div class="form-text text-danger">Coché d'après l'analyse du fichier.</div>
+                    @endif
+                </div>
+
+                <div class="col-md-3">
+                    <label for="bonus_points" class="form-label">Points bonus</label>
+                    <input type="number" class="form-control" name="bonus_points" id="bonus_points"
+                           value="0" min="0" step="1">
+                    <div class="form-text">Ajoutés après la division.</div>
+                </div>
+
+                <div class="col-md-5 text-md-end">
+                    <div class="text-muted small">Total attribué</div>
+                    <div class="display-6" id="totalPoints">0</div>
+                    <div class="text-muted small" id="totalDetail"></div>
+                </div>
+            </div>
+        </div>
+
         <script>
-            // Le total suit les cases cochées : il annonce ce qui sera
-            // réellement enregistré, pas ce que le fichier IGC a détecté.
+            // Le total suit les cases cochées, la vache et le bonus : il annonce
+            // ce qui sera réellement enregistré, pas ce que le fichier a détecté.
             (function () {
-                const rows = Array.from(document.querySelectorAll('tbody tr'));
+                const rows  = Array.from(document.querySelectorAll('tbody tr'));
+                const base  = document.getElementById('basePoints');
                 const total = document.getElementById('totalPoints');
+                const detail = document.getElementById('totalDetail');
+                const vache = document.getElementById('vache');
+                const bonus = document.getElementById('bonus_points');
                 if (!total) return;
 
                 function refresh() {
                     let sum = 0;
                     for (const row of rows) {
-                        const box = row.querySelector('input[type="checkbox"]');
+                        const box  = row.querySelector('input[type="checkbox"]');
                         const cell = row.querySelector('[data-points]');
                         if (box && box.checked && cell) {
                             sum += parseInt(cell.dataset.points, 10) || 0;
                         }
                     }
-                    total.textContent = sum;
+
+                    const extra   = Math.max(0, parseInt(bonus.value, 10) || 0);
+                    const divided = vache.checked ? Math.round(sum / 2) : sum;
+
+                    base.textContent  = sum;
+                    total.textContent = divided + extra;
+
+                    const parts = [sum + ' pts'];
+                    if (vache.checked) parts.push('÷ 2 (vaché)');
+                    if (extra > 0)     parts.push('+ ' + extra + ' bonus');
+                    detail.textContent = parts.join('  ');
                 }
 
                 rows.forEach(row => {
                     const box = row.querySelector('input[type="checkbox"]');
                     if (box) box.addEventListener('change', refresh);
                 });
+                vache.addEventListener('change', refresh);
+                bonus.addEventListener('input', refresh);
                 refresh();
             })();
         </script>

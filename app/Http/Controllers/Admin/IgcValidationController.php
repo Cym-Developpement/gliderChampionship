@@ -7,6 +7,7 @@ use App\Models\CompetitionDay;
 use App\Models\Pilot;
 use App\Models\PilotScore;
 use App\Models\PilotTurnpoint;
+use App\Models\Setting;
 use App\Models\Turnpoint;
 use App\Services\ScoringService;
 use Illuminate\Http\Request;
@@ -80,6 +81,11 @@ class IgcValidationController extends Controller
         $config   = ScoringService::scoringConfig($comp);
         $handicap = (float) ($pilot->participantForDay($day, $comp->id)?->handicap ?? 1.00);
 
+        $altitudes = $this->analyseAltitudes(
+            $inspector->getGpsPoints(),
+            (int) (Setting::get('vache_height_m', $comp->id) ?? 200)
+        );
+
         // For each turnpoint: use passedNearPoint() from the library
         $results = [];
         foreach ($turnpoints as $tp) {
@@ -107,12 +113,18 @@ class IgcValidationController extends Controller
                 'points'         => (int) round(
                     ScoringService::pointsForTurnpoint($tp, $comp, $handicap, $config)
                 ),
+                // Une balise franchie après la vache ne compte plus : le vol
+                // est terminé, la suite du trace est un convoyage ou une
+                // remise en l'air hors épreuve.
+                'after_vache'    => $altitudes['vache_at'] !== null
+                    && $validatedAt !== null
+                    && strtotime((string) $validatedAt) > strtotime($altitudes['vache_at']),
             ];
         }
 
         return view('admin.days.igc', compact(
             'day', 'pilot', 'comp', 'turnpoints', 'flarmIds',
-            'results', 'fixCount', 'maxSpeedKmh', 'maxAltM', 'maxGnssM'
+            'results', 'fixCount', 'maxSpeedKmh', 'maxAltM', 'maxGnssM', 'altitudes'
         ));
     }
 
@@ -121,6 +133,8 @@ class IgcValidationController extends Controller
         $request->validate([
             'igc_turnpoints'              => 'nullable|array',
             'igc_turnpoints.*.distance_m' => 'nullable|integer|min:0',
+            'bonus_points'                => 'nullable|integer|min:0|max:100000',
+            'vache'                       => 'nullable|boolean',
         ]);
 
         $comp = $day->competition;
@@ -149,8 +163,23 @@ class IgcValidationController extends Controller
             }
         }
 
-        // Recompute and freeze score, mark as validated
-        $score    = ScoringService::computePilotDayScore($pilot, $comp, $day);
+        // Score des balises retenues, puis ajustements de l'épreuve : la vache
+        // divise par deux, le bonus s'ajoute après — un bonus ne doit pas être
+        // amputé par une pénalité qui ne porte que sur le vol lui-même.
+        $base  = ScoringService::computePilotDayScore($pilot, $comp, $day);
+        $vache = $request->boolean('vache');
+        $bonus = (int) $request->input('bonus_points', 0);
+
+        $score = (int) round($vache ? $base / 2 : $base) + $bonus;
+
+        $detail = $base . ' pts';
+        if ($vache) {
+            $detail .= ' ÷ 2 (vaché)';
+        }
+        if ($bonus > 0) {
+            $detail .= ' + ' . $bonus . ' bonus';
+        }
+
         $existing = PilotScore::where('pilot_id', $pilot->id)
             ->where('competition_day_id', $day->id)
             ->first();
@@ -176,7 +205,85 @@ class IgcValidationController extends Controller
 
         return redirect()
             ->route('admin.days.scores', $day)
-            ->with('success', "IGC validé — {$pilot->name} : {$score} pts. Score marqué comme validé.");
+            ->with('success', "IGC validé — {$pilot->name} : {$score} pts ({$detail}). Score marqué comme validé.");
+    }
+
+    /**
+     * Analyse des altitudes du vol.
+     *
+     * La hauteur est comptée au-dessus du terrain, pris comme l'altitude du
+     * premier point enregistré — l'enregistreur démarre au sol. Faute de
+     * modèle de terrain, c'est la seule référence disponible.
+     *
+     * Décollage et atterrissage sont exclus en bornant l'analyse au premier et
+     * au dernier point passés au-dessus du seuil : ce qui précède est la
+     * montée au treuil ou au remorqué, ce qui suit est l'approche.
+     *
+     * @param  list<object> $fixes
+     * @return array{ground: ?int, min_height: ?int, min_at: ?string, vache_at: ?string, threshold: int}
+     */
+    private function analyseAltitudes(array $fixes, int $threshold): array
+    {
+        $empty = ['ground' => null, 'min_height' => null, 'min_at' => null, 'vache_at' => null, 'threshold' => $threshold];
+
+        $points = [];
+        foreach ($fixes as $fix) {
+            // L'altitude barométrique prime ; certains enregistreurs ne
+            // fournissent que la GNSS.
+            $altitude = $fix->pressureAltitude ?? null;
+            if (!is_numeric($altitude) || $altitude <= 0) {
+                $altitude = $fix->gnssAltitude ?? null;
+            }
+            if (is_numeric($altitude)) {
+                $points[] = ['alt' => (int) $altitude, 'at' => $fix->dateTime ?? null];
+            }
+        }
+
+        if (count($points) < 3) {
+            return $empty;
+        }
+
+        $ground = $points[0]['alt'];
+
+        // Fenêtre de vol : du premier au dernier point au-dessus du seuil.
+        $takeoff = null;
+        $landing = null;
+        foreach ($points as $i => $point) {
+            if ($point['alt'] - $ground > $threshold) {
+                $takeoff ??= $i;
+                $landing = $i;
+            }
+        }
+
+        if ($takeoff === null || $landing <= $takeoff) {
+            return ['ground' => $ground] + $empty;
+        }
+
+        $minHeight = null;
+        $minAt     = null;
+        $vacheAt   = null;
+
+        for ($i = $takeoff; $i <= $landing; $i++) {
+            $height = $points[$i]['alt'] - $ground;
+
+            if ($minHeight === null || $height < $minHeight) {
+                $minHeight = $height;
+                $minAt     = $points[$i]['at'];
+            }
+
+            // Premier passage sous le seuil en plein vol : la vache présumée.
+            if ($vacheAt === null && $height <= $threshold) {
+                $vacheAt = $points[$i]['at'];
+            }
+        }
+
+        return [
+            'ground'     => $ground,
+            'min_height' => $minHeight,
+            'min_at'     => $minAt,
+            'vache_at'   => $vacheAt,
+            'threshold'  => $threshold,
+        ];
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────────
