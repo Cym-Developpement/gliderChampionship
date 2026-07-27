@@ -40,6 +40,38 @@ class Pilot extends Model
     {
         return $this->hasMany(PilotTurnpoint::class);
     }
+
+    public function dayAssignments()
+    {
+        return $this->hasMany(DayAssignment::class);
+    }
+
+    /**
+     * Planeur du pilote pour une journée donnée.
+     *
+     * L'affectation du jour prime ; à défaut on retombe sur l'association
+     * globale participant_pilot, ce qui préserve le fonctionnement des
+     * compétitions où le pilote garde la même machine.
+     */
+    public function participantForDay(?CompetitionDay $day, ?int $competitionId = null): ?Participant
+    {
+        $competitionId ??= $this->competition_id;
+
+        if ($day) {
+            $assignment = DayAssignment::where('competition_day_id', $day->id)
+                ->where('pilot_id', $this->id)
+                ->with('participant')
+                ->first();
+
+            if ($assignment && $assignment->participant) {
+                return $assignment->participant;
+            }
+        }
+
+        return $this->participants()
+            ->when($competitionId, fn($q) => $q->where('competition_id', $competitionId))
+            ->first();
+    }
 }
 
 

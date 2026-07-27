@@ -160,8 +160,9 @@ class ScoringService
             ?? '(DISTANCE_TURNPOINT * BASE) / COEF_PLANEUR';
         $base = (float) (Setting::get('scoring_base', $comp->id) ?? 100);
 
-        // Get pilot's handicap from linked participant
-        $participant = $pilot->participants()->where('competition_id', $comp->id)->first();
+        // Handicap du planeur affecté ce jour-là, à défaut celui du planeur
+        // associé sur toute la compétition.
+        $participant = $pilot->participantForDay($day, $comp->id);
         $handicap = $participant ? (float) $participant->handicap : 1.00;
 
         // Get validated turnpoints for this pilot on this day

@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Admin\AuthController;
+use App\Http\Controllers\Admin\CacheController;
 use App\Http\Controllers\Admin\CompetitionController;
 use App\Http\Controllers\Admin\CompetitionDayController;
 use App\Http\Controllers\Admin\DashboardController;
@@ -52,6 +53,8 @@ Route::prefix('admin')->middleware('auth')->group(function () {
     Route::post('days', [CompetitionDayController::class, 'store'])->name('admin.days.store');
     Route::post('days/{day}/start', [CompetitionDayController::class, 'start'])->name('admin.days.start');
     Route::post('days/{day}/close', [CompetitionDayController::class, 'close'])->name('admin.days.close');
+    Route::get('days/{day}/assignments', [CompetitionDayController::class, 'editAssignments'])->name('admin.days.assignments');
+    Route::post('days/{day}/assignments', [CompetitionDayController::class, 'updateAssignments'])->name('admin.days.updateAssignments');
     Route::get('days/{day}/scores', [CompetitionDayController::class, 'editScores'])->name('admin.days.scores');
     Route::post('days/{day}/scores', [CompetitionDayController::class, 'updateScores'])->name('admin.days.updateScores');
 
@@ -61,6 +64,10 @@ Route::prefix('admin')->middleware('auth')->group(function () {
     Route::post('days/{day}/pilots/{pilot}/igc/save', [IgcValidationController::class, 'save'])->name('admin.igc.save');
 
     Route::resource('settings', SettingController::class)->names('admin.settings')->only(['index', 'store', 'update', 'destroy']);
+
+    Route::get('cache', [CacheController::class, 'index'])->name('admin.cache.index');
+    Route::post('cache/clear', [CacheController::class, 'clear'])->name('admin.cache.clear');
+    Route::post('cache/rebuild', [CacheController::class, 'rebuild'])->name('admin.cache.rebuild');
 
     Route::get('ogn-assign', [OgnAssignController::class, 'index'])->name('admin.ogn-assign.index');
     Route::post('ogn-assign', [OgnAssignController::class, 'store'])->name('admin.ogn-assign.store');

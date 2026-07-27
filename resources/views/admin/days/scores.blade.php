@@ -3,7 +3,10 @@
 @section('content')
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h2>Scores — Jour {{ $day->day_number }} ({{ $day->date->format('d/m/Y') }})</h2>
-    <a href="{{ route('admin.competition.edit') }}" class="btn btn-secondary">Retour</a>
+    <div class="d-flex gap-2">
+        <a href="{{ route('admin.days.assignments', $day) }}" class="btn btn-outline-secondary">Planeurs</a>
+        <a href="{{ route('admin.competition.edit') }}" class="btn btn-secondary">Retour</a>
+    </div>
 </div>
 
 @if(session('success'))
@@ -17,6 +20,7 @@
             <tr>
                 <th>Pilote</th>
                 <th>Points auto</th>
+                <th>Planeur du jour</th>
                 <th>Handicap</th>
                 <th>Score final</th>
                 <th title="Cocher si les scores ont été validés via fichier IGC">
@@ -36,6 +40,7 @@
                     <input type="hidden" name="scores[{{ $i }}][pilot_id]" value="{{ $entry['pilot']->id }}">
                 </td>
                 <td>{{ $entry['raw_points'] }}</td>
+                <td>{{ $entry['glider']?->reg ?? '—' }}</td>
                 <td>{{ number_format($entry['handicap'], 2) }}</td>
                 <td>
                     <input type="number" name="scores[{{ $i }}][points]" class="form-control form-control-sm" style="width: 120px;" value="{{ $entry['final_points'] }}" min="0">

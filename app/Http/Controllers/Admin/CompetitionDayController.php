@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Competition;
 use App\Models\CompetitionDay;
+use App\Models\DayAssignment;
+use App\Models\Participant;
 use App\Models\Pilot;
 use App\Models\PilotScore;
 use App\Services\ScoringService;
@@ -71,6 +73,67 @@ class CompetitionDayController extends Controller
         return redirect()->route('admin.competition.edit')->with('success', "Jour {$day->day_number} clôturé. Scores figés.");
     }
 
+    /**
+     * Affectation des planeurs pour une journée.
+     *
+     * Chaque pilote est pré-positionné sur son planeur du jour s'il en a un,
+     * sinon sur son planeur habituel : enregistrer sans rien changer fige
+     * simplement la situation par défaut.
+     */
+    public function editAssignments(CompetitionDay $day)
+    {
+        $competition = $day->competition;
+
+        $pilots = Pilot::where('competition_id', $competition->id)
+            ->with('participants')
+            ->orderBy('name')
+            ->get();
+
+        $gliders = Participant::where('competition_id', $competition->id)
+            ->orderBy('reg')
+            ->get();
+
+        $selected = [];
+        foreach ($pilots as $pilot) {
+            $selected[$pilot->id] = $pilot->participantForDay($day, $competition->id)?->id;
+        }
+
+        return view('admin.days.assignments', compact('day', 'competition', 'pilots', 'gliders', 'selected'));
+    }
+
+    public function updateAssignments(Request $request, CompetitionDay $day)
+    {
+        $data = $request->validate([
+            'assignments'   => 'array',
+            'assignments.*' => 'nullable|exists:participants,id',
+        ]);
+
+        $kept = 0;
+        $cleared = 0;
+
+        foreach ($data['assignments'] ?? [] as $pilotId => $participantId) {
+            if (empty($participantId)) {
+                DayAssignment::where('competition_day_id', $day->id)
+                    ->where('pilot_id', $pilotId)
+                    ->delete();
+                $cleared++;
+                continue;
+            }
+
+            DayAssignment::updateOrCreate(
+                ['competition_day_id' => $day->id, 'pilot_id' => $pilotId],
+                ['participant_id' => $participantId]
+            );
+            $kept++;
+        }
+
+        // Le handicap ayant pu changer, les scores provisoires du jour bougent.
+        $message = "Affectations enregistrées : {$kept} pilote(s) avec planeur";
+        $message .= $cleared > 0 ? ", {$cleared} sans affectation." : '.';
+
+        return redirect()->route('admin.days.assignments', $day)->with('success', $message);
+    }
+
     public function editScores(CompetitionDay $day)
     {
         $competition = $day->competition;
@@ -89,11 +152,13 @@ class CompetitionDayController extends Controller
                 ->orderByDesc('measured_at')
                 ->first();
 
-            $participant = $pilot->participants->first();
+            // Planeur du jour : c'est son handicap qui a servi au calcul.
+            $participant = $pilot->participantForDay($day, $competition->id);
             $handicap = $participant ? (float) $participant->handicap : 1.00;
 
             $scores[] = [
                 'pilot'        => $pilot,
+                'glider'       => $participant,
                 'raw_points'   => $rawScore ? (int) $rawScore->points : 0,
                 'final_points' => $frozenScore ? (int) $frozenScore->points : 0,
                 'handicap'     => $handicap,

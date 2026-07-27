@@ -93,9 +93,14 @@ class ApiController extends Controller
             }
         }])->get();
 
-        $list = $pilots->map(function ($p) {
+        // Le planeur peut changer d'une journée à l'autre : c'est celui du jour
+        // actif qui doit être renvoyé, sinon la carte rattacherait les positions
+        // OGN à la mauvaise immatriculation.
+        $activeDay = $comp?->activeDay();
+
+        $list = $pilots->map(function ($p) use ($activeDay, $comp) {
             /** @var \App\Models\Participant|null $linked */
-            $linked = $p->participants->first();
+            $linked = $p->participantForDay($activeDay, $comp?->id);
             return [
                 'id' => $p->id,
                 'name' => $p->name,
