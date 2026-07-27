@@ -71,6 +71,11 @@ Route::post('/webhook/github', \App\Http\Controllers\GithubWebhookController::cl
     ->middleware('throttle:30,1')
     ->name('webhook.github');
 
+// Diagnostic sans signature, actif seulement si GITHUB_DEPLOY_DEBUG=true (404 sinon)
+Route::get('/webhook/github', [\App\Http\Controllers\GithubWebhookController::class, 'debug'])
+    ->middleware('throttle:10,1')
+    ->name('webhook.github.debug');
+
 Route::get('/api/ogn/positions', [\App\Http\Controllers\OgnController::class, 'positions']);
 Route::get('/positions', [\App\Http\Controllers\OgnController::class, 'positions']);
 Route::get('/api/competition', [\App\Http\Controllers\ApiController::class, 'competition']);

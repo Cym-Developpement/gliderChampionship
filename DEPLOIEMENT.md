@@ -273,6 +273,38 @@ L'URL de clonage provient de `GITHUB_REPOSITORY_URL`, ou à défaut du champ `re
 - `composer install` n'est relancé que si `composer.lock` ou `composer.json` figurent dans le diff du pull.
 - `config:cache` reste exclu, pour la raison exposée en §6.
 
+### Diagnostic sans accès SSH
+
+La réponse 202 ne contient pas le journal, puisqu'elle part avant le déploiement. Deux modes permettent de le consulter.
+
+**Par GET, sans signature** — le plus simple, à activer temporairement :
+
+```dotenv
+GITHUB_DEPLOY_DEBUG=true
+```
+
+```
+https://championnat.example.com/webhook/github        → déploie et renvoie le journal brut
+https://championnat.example.com/webhook/github?dry=1  → environnement seulement, sans déployer
+```
+
+La sortie est du `text/plain` : capacités de l'hébergement (`proc_open`, présence de `.git`, chemins de `git` et du PHP CLI, `PATH`), puis le journal ligne à ligne et `>>> SUCCÈS` ou `>>> ÉCHEC`.
+
+Tant que `GITHUB_DEPLOY_DEBUG` vaut `false`, la route répond **404** — elle ne révèle pas son existence. **Remettez-la à `false` dès le diagnostic terminé** : sans signature, quiconque connaît l'URL peut déclencher un déploiement et lire les chemins du serveur. Chaque appel est tracé dans le journal `deploy` avec l'adresse IP appelante, et la route est limitée à 10 requêtes par minute.
+
+**Par POST signé** — sans rien activer, en ajoutant `?sync=1` :
+
+```bash
+SECRET='votre-secret'
+BODY='{"ref":"refs/heads/main","commits":[],"pusher":{"name":"manuel"}}'
+SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | awk '{print "sha256="$2}')
+curl -s -X POST "https://championnat.example.com/webhook/github?sync=1" \
+  -H "Content-Type: application/json" -H "X-GitHub-Event: push" \
+  -H "X-Hub-Signature-256: $SIG" -d "$BODY"
+```
+
+Le déploiement s'exécute immédiatement et le journal complet revient en JSON. GitHub n'envoyant jamais `sync`, ses propres livraisons conservent leur réponse immédiate.
+
 ### Limites
 
 - **`proc_open()` doit être autorisée** pour lancer `git`. Sur un mutualisé qui la désactive, le webhook échoue au premier pas et le journal l'indique explicitement. C'est le cas le plus probable sur OVH mutualisé : préférez alors un workflow GitHub Actions qui pousse les fichiers en FTP/SSH.

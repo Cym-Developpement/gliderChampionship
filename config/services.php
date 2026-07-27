@@ -33,6 +33,8 @@ return [
         'deploy_enabled' => env('GITHUB_DEPLOY_ENABLED', false),
         'deploy_branch'  => env('GITHUB_DEPLOY_BRANCH', 'main'),
         'repository_url' => env('GITHUB_REPOSITORY_URL'),
+        // Route GET de diagnostic, sans signature : à ne laisser active que le temps d'un dépannage
+        'deploy_debug'   => env('GITHUB_DEPLOY_DEBUG', false),
     ],
 
     'slack' => [

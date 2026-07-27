@@ -97,6 +97,52 @@ class GithubWebhookController extends Controller
         ]);
     }
 
+    /**
+     * Mode debug : déclenche un déploiement par simple GET, sans signature,
+     * et renvoie le journal brut en text/plain.
+     *
+     * Réservé au diagnostic sur un hébergement sans accès SSH. L'accès est
+     * conditionné à GITHUB_DEPLOY_DEBUG=true — sans quoi la route répond 404,
+     * ce qui ne révèle pas son existence. À remettre à false ensuite : sans
+     * signature, quiconque connaît l'URL peut déclencher un déploiement et
+     * lire les chemins du serveur.
+     */
+    public function debug(Request $request, DeployService $deployer)
+    {
+        if (!config('services.github.deploy_debug')) {
+            abort(404);
+        }
+
+        $lines = [];
+
+        if ($request->boolean('dry')) {
+            // Hors mode dry, le journal du déploiement rapporte déjà ces lignes.
+            $lines[] = '=== Environnement ===';
+            foreach ($deployer->environment() as $label => $value) {
+                // str_pad compterait les octets : « répertoire » serait désaligné.
+                $lines[] = $label . str_repeat(' ', max(1, 12 - mb_strlen($label))) . ': ' . $value;
+            }
+            $lines[] = '';
+            $lines[] = '(mode dry : environnement seulement, aucun déploiement lancé)';
+        } else {
+            Log::channel('deploy')->warning('Déploiement déclenché en mode debug (sans signature).', [
+                'ip' => $request->ip(),
+            ]);
+
+            $result  = $deployer->run();
+            $lines[] = '=== Déploiement ===';
+            $lines[] = $result['log'];
+            $lines[] = '';
+            $lines[] = $result['ok'] ? '>>> SUCCÈS' : '>>> ÉCHEC';
+        }
+
+        return response(implode(PHP_EOL, $lines) . PHP_EOL, 200, [
+            'Content-Type'  => 'text/plain; charset=utf-8',
+            'Cache-Control' => 'no-store',
+            'X-Robots-Tag'  => 'noindex, nofollow',
+        ]);
+    }
+
     /** Contrôle HMAC SHA-256 de la charge utile brute. */
     private function signatureIsValid(Request $request, string $secret): bool
     {
