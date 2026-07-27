@@ -218,6 +218,30 @@ class PilotDayScoreTest extends TestCase
         $this->assertSame(30, $this->score());
     }
 
+    // ─── Cohérence avec l'écran de validation IGC ────────────────────────────
+
+    /**
+     * Le total du jour doit être exactement la somme des valeurs affichées
+     * balise par balise. Sommer les flottants puis arrondir une seule fois
+     * donnerait parfois un point d'écart avec l'écran.
+     */
+    public function test_le_total_egale_la_somme_des_valeurs_affichees(): void
+    {
+        $this->setFormula('DISTANCE_TURNPOINT * 1.7');   // valeurs non entières
+        $config = ScoringService::scoringConfig($this->competition);
+
+        $attendu = 0;
+        foreach ([12.5, 37.3, 88.9] as $km) {
+            $balise = $this->turnpointAt($km);
+            $this->validate($balise);
+            $attendu += (int) round(
+                ScoringService::pointsForTurnpoint($balise, $this->competition, 1.0, $config)
+            );
+        }
+
+        $this->assertSame($attendu, $this->score());
+    }
+
     // ─── Robustesse ──────────────────────────────────────────────────────────
 
     public function test_formule_invalide_neutralise_le_score_sans_planter(): void

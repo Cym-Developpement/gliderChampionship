@@ -252,11 +252,17 @@ class ScoringService
 
         foreach ($validatedTurnpoints as $pt) {
             if ($pt->turnpoint) {
-                $totalScore += self::pointsForTurnpoint($pt->turnpoint, $comp, $handicap, $config);
+                // Arrondi balise par balise : c'est ce qu'affiche l'écran de
+                // validation IGC, et une valeur entière par balise est ce
+                // qu'on peut expliquer à un concurrent. Sommer les flottants
+                // puis arrondir donnerait parfois un point d'écart.
+                $totalScore += round(
+                    self::pointsForTurnpoint($pt->turnpoint, $comp, $handicap, $config)
+                );
             }
         }
 
-        return (int) round($totalScore);
+        return (int) $totalScore;
     }
 
     /**

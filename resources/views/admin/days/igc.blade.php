@@ -237,8 +237,17 @@
                                            value="1"
                                            {{ $shouldInclude ? 'checked' : '' }}>
                                 </div>
+                            @elseif($flarmOk)
+                                {{-- Validée en vol mais absente de la trace : décochée par défaut,
+                                     l'organisateur reste libre de la maintenir. --}}
+                                <div class="form-check d-flex justify-content-center mb-0">
+                                    <input class="form-check-input"
+                                           type="checkbox"
+                                           name="igc_turnpoints[{{ $tp->id }}][include]"
+                                           value="1"
+                                           title="Validée par FLARM mais non confirmée par la trace">
+                                </div>
                             @else
-                                {{-- Not IGC-validated: hidden but carries distance for reference --}}
                                 @if($distM !== null)
                                     <span class="text-muted small">hors zone</span>
                                 @endif

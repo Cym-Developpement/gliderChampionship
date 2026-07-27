@@ -139,9 +139,23 @@ class IgcValidationController extends Controller
 
         $comp = $day->competition;
 
+        $included = [];
         foreach ($request->input('igc_turnpoints', []) as $tpId => $data) {
-            if (empty($data['include'])) continue;
+            if (!empty($data['include'])) {
+                $included[(int) $tpId] = $data;
+            }
+        }
 
+        // Le fichier IGC fait foi : les balises non retenues sont retirées de
+        // la journée. Sans cela, une validation FLARM que la trace n'a pas
+        // confirmée continuerait de compter, et le score enregistré
+        // dépasserait le total affiché à l'écran.
+        PilotTurnpoint::where('pilot_id', $pilot->id)
+            ->where('competition_day_id', $day->id)
+            ->when($included !== [], fn($q) => $q->whereNotIn('turnpoint_id', array_keys($included)))
+            ->delete();
+
+        foreach ($included as $tpId => $data) {
             $distM = isset($data['distance_m']) ? (int) $data['distance_m'] : null;
 
             $existing = PilotTurnpoint::where('pilot_id', $pilot->id)
