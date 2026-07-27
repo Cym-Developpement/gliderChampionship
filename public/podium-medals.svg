@@ -1,0 +1,148 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 260" width="520" height="260">
+  <defs>
+    <!-- Gold gradient -->
+    <radialGradient id="goldGrad" cx="50%" cy="40%" r="55%">
+      <stop offset="0%" stop-color="#FFE566"/>
+      <stop offset="60%" stop-color="#F5C200"/>
+      <stop offset="100%" stop-color="#C9960C"/>
+    </radialGradient>
+    <!-- Silver gradient -->
+    <radialGradient id="silverGrad" cx="50%" cy="40%" r="55%">
+      <stop offset="0%" stop-color="#E8E8E8"/>
+      <stop offset="60%" stop-color="#C0C0C0"/>
+      <stop offset="100%" stop-color="#888"/>
+    </radialGradient>
+    <!-- Bronze gradient -->
+    <radialGradient id="bronzeGrad" cx="50%" cy="40%" r="55%">
+      <stop offset="0%" stop-color="#E8A96A"/>
+      <stop offset="60%" stop-color="#CD7F32"/>
+      <stop offset="100%" stop-color="#8B5010"/>
+    </radialGradient>
+    <!-- Portrait bg -->
+    <radialGradient id="portraitBg" cx="50%" cy="35%" r="60%">
+      <stop offset="0%" stop-color="#D0D8E0"/>
+      <stop offset="100%" stop-color="#B0B8C4"/>
+    </radialGradient>
+    <!-- Clip circles -->
+    <clipPath id="clipGold"><circle cx="260" cy="108" r="48"/></clipPath>
+    <clipPath id="clipSilver"><circle cx="105" cy="118" r="40"/></clipPath>
+    <clipPath id="clipBronze"><circle cx="415" cy="118" r="40"/></clipPath>
+  </defs>
+
+  <!-- ===== SILVER MEDAL (left, 2nd) ===== -->
+  <g transform="translate(105,118)">
+    <!-- Ribbon spokes -->
+    <g opacity="0.7">
+      <rect x="-3" y="-58" width="6" height="22" rx="3" fill="#9BA8B0" transform="rotate(0)"/>
+      <rect x="-3" y="-58" width="6" height="22" rx="3" fill="#9BA8B0" transform="rotate(30)"/>
+      <rect x="-3" y="-58" width="6" height="22" rx="3" fill="#9BA8B0" transform="rotate(60)"/>
+      <rect x="-3" y="-58" width="6" height="22" rx="3" fill="#9BA8B0" transform="rotate(90)"/>
+      <rect x="-3" y="-58" width="6" height="22" rx="3" fill="#9BA8B0" transform="rotate(120)"/>
+      <rect x="-3" y="-58" width="6" height="22" rx="3" fill="#9BA8B0" transform="rotate(150)"/>
+      <rect x="-3" y="-58" width="6" height="22" rx="3" fill="#9BA8B0" transform="rotate(180)"/>
+      <rect x="-3" y="-58" width="6" height="22" rx="3" fill="#9BA8B0" transform="rotate(210)"/>
+      <rect x="-3" y="-58" width="6" height="22" rx="3" fill="#9BA8B0" transform="rotate(240)"/>
+      <rect x="-3" y="-58" width="6" height="22" rx="3" fill="#9BA8B0" transform="rotate(270)"/>
+      <rect x="-3" y="-58" width="6" height="22" rx="3" fill="#9BA8B0" transform="rotate(300)"/>
+      <rect x="-3" y="-58" width="6" height="22" rx="3" fill="#9BA8B0" transform="rotate(330)"/>
+    </g>
+    <!-- Outer ring -->
+    <circle r="52" fill="url(#silverGrad)" stroke="#A0A8B0" stroke-width="2"/>
+    <!-- Portrait circle -->
+    <circle r="40" fill="url(#portraitBg)" stroke="#C8D0D8" stroke-width="3"/>
+    <!-- Silhouette -->
+    <ellipse cx="0" cy="14" rx="17" ry="22" fill="#8A9BAA"/>
+    <circle cx="0" cy="-10" r="13" fill="#8A9BAA"/>
+    <!-- Crossed swords decoration -->
+    <line x1="-50" y1="-15" x2="-28" y2="5" stroke="#B0B8C0" stroke-width="3" stroke-linecap="round"/>
+    <line x1="-28" y1="-15" x2="-50" y2="5" stroke="#B0B8C0" stroke-width="3" stroke-linecap="round"/>
+    <line x1="28" y1="-15" x2="50" y2="5" stroke="#B0B8C0" stroke-width="3" stroke-linecap="round"/>
+    <line x1="50" y1="-15" x2="28" y2="5" stroke="#B0B8C0" stroke-width="3" stroke-linecap="round"/>
+  </g>
+  <!-- Silver ribbon -->
+  <g transform="translate(105,170)">
+    <path d="M-60,0 Q-55,-12 0,-12 Q55,-12 60,0 Q55,14 0,14 Q-55,14 -60,0Z" fill="#5B9BD5"/>
+    <path d="M-60,0 L-76,10 L-64,0 L-76,-10 Z" fill="#4080B8"/>
+    <path d="M60,0 L76,10 L64,0 L76,-10 Z" fill="#4080B8"/>
+    <text x="0" y="5" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="white" letter-spacing="0.5">2ème PLACE</text>
+  </g>
+
+  <!-- ===== GOLD MEDAL (center, 1st) ===== -->
+  <g transform="translate(260,108)">
+    <!-- Ribbon spokes -->
+    <g opacity="0.8">
+      <rect x="-4" y="-70" width="8" height="28" rx="4" fill="#E8B400" transform="rotate(0)"/>
+      <rect x="-4" y="-70" width="8" height="28" rx="4" fill="#E8B400" transform="rotate(22.5)"/>
+      <rect x="-4" y="-70" width="8" height="28" rx="4" fill="#E8B400" transform="rotate(45)"/>
+      <rect x="-4" y="-70" width="8" height="28" rx="4" fill="#E8B400" transform="rotate(67.5)"/>
+      <rect x="-4" y="-70" width="8" height="28" rx="4" fill="#E8B400" transform="rotate(90)"/>
+      <rect x="-4" y="-70" width="8" height="28" rx="4" fill="#E8B400" transform="rotate(112.5)"/>
+      <rect x="-4" y="-70" width="8" height="28" rx="4" fill="#E8B400" transform="rotate(135)"/>
+      <rect x="-4" y="-70" width="8" height="28" rx="4" fill="#E8B400" transform="rotate(157.5)"/>
+      <rect x="-4" y="-70" width="8" height="28" rx="4" fill="#E8B400" transform="rotate(180)"/>
+      <rect x="-4" y="-70" width="8" height="28" rx="4" fill="#E8B400" transform="rotate(202.5)"/>
+      <rect x="-4" y="-70" width="8" height="28" rx="4" fill="#E8B400" transform="rotate(225)"/>
+      <rect x="-4" y="-70" width="8" height="28" rx="4" fill="#E8B400" transform="rotate(247.5)"/>
+      <rect x="-4" y="-70" width="8" height="28" rx="4" fill="#E8B400" transform="rotate(270)"/>
+      <rect x="-4" y="-70" width="8" height="28" rx="4" fill="#E8B400" transform="rotate(292.5)"/>
+      <rect x="-4" y="-70" width="8" height="28" rx="4" fill="#E8B400" transform="rotate(315)"/>
+      <rect x="-4" y="-70" width="8" height="28" rx="4" fill="#E8B400" transform="rotate(337.5)"/>
+    </g>
+    <!-- Outer ring -->
+    <circle r="64" fill="url(#goldGrad)" stroke="#C9960C" stroke-width="2.5"/>
+    <!-- Laurel ring -->
+    <circle r="56" fill="none" stroke="#E8B400" stroke-width="1" stroke-dasharray="4 3"/>
+    <!-- Portrait circle -->
+    <circle r="48" fill="url(#portraitBg)" stroke="#F0D060" stroke-width="3"/>
+    <!-- Silhouette -->
+    <ellipse cx="0" cy="18" rx="20" ry="26" fill="#8A9BAA"/>
+    <circle cx="0" cy="-10" r="16" fill="#8A9BAA"/>
+    <!-- Stars bottom -->
+    <text x="0" y="70" text-anchor="middle" font-size="14" fill="#F5C200">★ ★ ★</text>
+  </g>
+  <!-- Gold ribbon -->
+  <g transform="translate(260,182)">
+    <path d="M-72,0 Q-66,-15 0,-15 Q66,-15 72,0 Q66,17 0,17 Q-66,17 -72,0Z" fill="#5B9BD5"/>
+    <path d="M-72,0 L-92,12 L-76,0 L-92,-12 Z" fill="#4080B8"/>
+    <path d="M72,0 L92,12 L76,0 L92,-12 Z" fill="#4080B8"/>
+    <text x="0" y="6" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" font-weight="bold" fill="white" letter-spacing="0.5">1er PLACE</text>
+  </g>
+
+  <!-- ===== BRONZE MEDAL (right, 3rd) ===== -->
+  <g transform="translate(415,118)">
+    <!-- Ribbon spokes -->
+    <g opacity="0.7">
+      <rect x="-3" y="-58" width="6" height="22" rx="3" fill="#A0724A" transform="rotate(0)"/>
+      <rect x="-3" y="-58" width="6" height="22" rx="3" fill="#A0724A" transform="rotate(30)"/>
+      <rect x="-3" y="-58" width="6" height="22" rx="3" fill="#A0724A" transform="rotate(60)"/>
+      <rect x="-3" y="-58" width="6" height="22" rx="3" fill="#A0724A" transform="rotate(90)"/>
+      <rect x="-3" y="-58" width="6" height="22" rx="3" fill="#A0724A" transform="rotate(120)"/>
+      <rect x="-3" y="-58" width="6" height="22" rx="3" fill="#A0724A" transform="rotate(150)"/>
+      <rect x="-3" y="-58" width="6" height="22" rx="3" fill="#A0724A" transform="rotate(180)"/>
+      <rect x="-3" y="-58" width="6" height="22" rx="3" fill="#A0724A" transform="rotate(210)"/>
+      <rect x="-3" y="-58" width="6" height="22" rx="3" fill="#A0724A" transform="rotate(240)"/>
+      <rect x="-3" y="-58" width="6" height="22" rx="3" fill="#A0724A" transform="rotate(270)"/>
+      <rect x="-3" y="-58" width="6" height="22" rx="3" fill="#A0724A" transform="rotate(300)"/>
+      <rect x="-3" y="-58" width="6" height="22" rx="3" fill="#A0724A" transform="rotate(330)"/>
+    </g>
+    <!-- Outer ring -->
+    <circle r="52" fill="url(#bronzeGrad)" stroke="#8B5010" stroke-width="2"/>
+    <!-- Portrait circle -->
+    <circle r="40" fill="url(#portraitBg)" stroke="#E0A060" stroke-width="3"/>
+    <!-- Silhouette -->
+    <ellipse cx="0" cy="14" rx="17" ry="22" fill="#8A9BAA"/>
+    <circle cx="0" cy="-10" r="13" fill="#8A9BAA"/>
+    <!-- Crossed decoration -->
+    <line x1="-50" y1="-15" x2="-28" y2="5" stroke="#A07848" stroke-width="3" stroke-linecap="round"/>
+    <line x1="-28" y1="-15" x2="-50" y2="5" stroke="#A07848" stroke-width="3" stroke-linecap="round"/>
+    <line x1="28" y1="-15" x2="50" y2="5" stroke="#A07848" stroke-width="3" stroke-linecap="round"/>
+    <line x1="50" y1="-15" x2="28" y2="5" stroke="#A07848" stroke-width="3" stroke-linecap="round"/>
+  </g>
+  <!-- Bronze ribbon -->
+  <g transform="translate(415,170)">
+    <path d="M-60,0 Q-55,-12 0,-12 Q55,-12 60,0 Q55,14 0,14 Q-55,14 -60,0Z" fill="#5B9BD5"/>
+    <path d="M-60,0 L-76,10 L-64,0 L-76,-10 Z" fill="#4080B8"/>
+    <path d="M60,0 L76,10 L64,0 L76,-10 Z" fill="#4080B8"/>
+    <text x="0" y="5" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="white" letter-spacing="0.5">3ème PLACE</text>
+  </g>
+</svg>
