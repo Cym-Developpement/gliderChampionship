@@ -10,7 +10,7 @@ class Pilot extends Model
     use HasFactory;
 
     protected $fillable = [
-        'competition_id', 'name', 'callsign', 'photo_path', 'reg', 'glider_brand', 'glider_model',
+        'competition_id', 'name', 'callsign', 'email', 'photo_path', 'reg', 'glider_brand', 'glider_model',
     ];
 
     protected $appends = ['photo_url'];

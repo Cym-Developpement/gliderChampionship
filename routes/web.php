@@ -4,6 +4,7 @@ use App\Http\Controllers\Admin\AuthController;
 use App\Http\Controllers\Admin\CacheController;
 use App\Http\Controllers\Admin\CompetitionController;
 use App\Http\Controllers\Admin\CompetitionDayController;
+use App\Http\Controllers\Admin\DayNotificationController;
 use App\Http\Controllers\Admin\DashboardController;
 use App\Http\Controllers\Admin\IgcValidationController;
 use App\Http\Controllers\Admin\MigrationController;
@@ -56,6 +57,8 @@ Route::prefix('admin')->middleware('auth')->group(function () {
     Route::post('days/{day}/close', [CompetitionDayController::class, 'close'])->name('admin.days.close');
     Route::get('days/{day}/assignments', [CompetitionDayController::class, 'editAssignments'])->name('admin.days.assignments');
     Route::post('days/{day}/assignments', [CompetitionDayController::class, 'updateAssignments'])->name('admin.days.updateAssignments');
+    Route::get('days/{day}/notify', [DayNotificationController::class, 'index'])->name('admin.days.notify');
+    Route::post('days/{day}/notify', [DayNotificationController::class, 'send'])->name('admin.days.notify.send');
     Route::get('days/{day}/scores', [CompetitionDayController::class, 'editScores'])->name('admin.days.scores');
     Route::post('days/{day}/scores', [CompetitionDayController::class, 'updateScores'])->name('admin.days.updateScores');
 

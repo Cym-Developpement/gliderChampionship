@@ -128,6 +128,7 @@
                 @endif
                 <a href="{{ route('admin.days.assignments', $day) }}" class="btn btn-outline-secondary btn-sm">Planeurs</a>
                 <a href="{{ route('admin.days.scores', $day) }}" class="btn btn-outline-primary btn-sm">Scores</a>
+                <a href="{{ route('admin.days.notify', $day) }}" class="btn btn-outline-success btn-sm">Notifier</a>
             </td>
         </tr>
         @endforeach

@@ -29,6 +29,7 @@ class PilotController extends Controller
         $data = $request->validate([
             'name' => 'required|string|max:255',
             'callsign' => 'nullable|string|max:255',
+            'email' => 'nullable|email|max:255',
             'competition_id' => 'required|exists:competitions,id',
             'photo' => 'nullable|image|max:2048',
         ]);
@@ -54,6 +55,7 @@ class PilotController extends Controller
         $data = $request->validate([
             'name' => 'required|string|max:255',
             'callsign' => 'nullable|string|max:255',
+            'email' => 'nullable|email|max:255',
             'competition_id' => 'required|exists:competitions,id',
             'photo' => 'nullable|image|max:2048',
         ]);
@@ -116,9 +118,14 @@ class PilotController extends Controller
                 continue;
             }
 
+            $email = trim($row['email'] ?? '');
+
             Pilot::create([
                 'competition_id' => $competitionId,
                 'name'           => $name,
+                // Colonne « Email » du fichier d'inscription, indispensable
+                // à l'envoi du récapitulatif de journée.
+                'email'          => filter_var($email, FILTER_VALIDATE_EMAIL) ? $email : null,
             ]);
             $created++;
         }

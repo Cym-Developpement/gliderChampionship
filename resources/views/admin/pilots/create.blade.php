@@ -15,6 +15,12 @@
                 <label for="callsign" class="form-label">Callsign</label>
                 <input type="text" name="callsign" id="callsign" class="form-control" value="{{ old('callsign') }}">
             </div>
+
+            <div class="mb-3">
+                <label for="email" class="form-label">E-mail</label>
+                <input type="email" name="email" id="email" class="form-control" value="{{ old('email') }}">
+                <div class="form-text">Sert à l'envoi du récapitulatif de journée.</div>
+            </div>
             <div class="mb-3">
                 <label for="competition_id" class="form-label">Compétition</label>
                 <select name="competition_id" id="competition_id" class="form-select" required>
