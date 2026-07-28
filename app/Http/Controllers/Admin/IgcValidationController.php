@@ -147,6 +147,7 @@ class IgcValidationController extends Controller
             'igc_turnpoints.*.distance_m' => 'nullable|integer|min:0',
             'bonus_points'                => 'nullable|integer|min:0|max:100000',
             'vache'                       => 'nullable|boolean',
+            'total_points'                => 'nullable|integer|min:0|max:1000000',
         ]);
 
         $comp = $day->competition;
@@ -189,16 +190,26 @@ class IgcValidationController extends Controller
             }
         }
 
-        // Score des balises retenues, puis ajustements de l'épreuve : la vache
-        // divise par deux, le bonus s'ajoute après — un bonus ne doit pas être
-        // amputé par une pénalité qui ne porte que sur le vol lui-même.
-        $base  = ScoringService::computePilotDayScore($pilot, $comp, $day);
         $vache = $request->boolean('vache');
         $bonus = (int) $request->input('bonus_points', 0);
 
-        $score = (int) round($vache ? $base / 2 : $base) + $bonus;
+        // Le total affiché à l'écran fait foi : c'est la décision de
+        // l'organisateur, qui a vu la trace et arbitré balise par balise. Le
+        // recalculer ici rouvrirait la porte aux divergences — un pilote
+        // déclaré non volant, par exemple, verrait sa base ramenée à zéro
+        // alors que l'écran annonçait le contraire.
+        $submitted = $request->input('total_points');
 
-        $detail = $base . ' pts';
+        if ($submitted !== null && $submitted !== '') {
+            $score  = max(0, (int) $submitted);
+            $detail = 'total validé à l\'écran';
+        } else {
+            // Repli si le champ n'a pas été transmis (JavaScript inactif).
+            $base   = ScoringService::computePilotDayScore($pilot, $comp, $day);
+            $score  = (int) round($vache ? $base / 2 : $base) + $bonus;
+            $detail = $base . ' pts';
+        }
+
         if ($vache) {
             $detail .= ' ÷ 2 (vaché)';
         }

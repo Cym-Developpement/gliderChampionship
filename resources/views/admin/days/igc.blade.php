@@ -305,6 +305,9 @@
                     <div class="text-muted small">Total attribué</div>
                     <div class="display-6" id="totalPoints">0</div>
                     <div class="text-muted small" id="totalDetail"></div>
+                    {{-- Le total affiché fait foi : c'est lui qui est enregistré,
+                         sans recalcul côté serveur. --}}
+                    <input type="hidden" name="total_points" id="totalPointsField" value="0">
                 </div>
             </div>
         </div>
@@ -336,6 +339,7 @@
 
                     base.textContent  = sum;
                     total.textContent = divided + extra;
+                    document.getElementById('totalPointsField').value = divided + extra;
 
                     const parts = [sum + ' pts'];
                     if (vache.checked) parts.push('÷ 2 (vaché)');

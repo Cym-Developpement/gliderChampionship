@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Http\Controllers\Admin\CompetitionDayController;
+use App\Http\Controllers\Admin\IgcValidationController;
 use App\Models\Competition;
 use App\Models\CompetitionDay;
 use App\Models\DayAssignment;
@@ -14,6 +15,7 @@ use App\Models\Setting;
 use App\Models\Turnpoint;
 use App\Services\ScoringService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Request;
 use Tests\TestCase;
 
 /**
@@ -292,6 +294,36 @@ class PilotDayScoreTest extends TestCase
             ->value('points'));
     }
 
+    // ─── Validation IGC ──────────────────────────────────────────────────────
+
+    /**
+     * La validation IGC enregistre le total arbitré à l'écran, sans recalcul.
+     * Le recalculer rouvrirait les divergences : ici le pilote est déclaré non
+     * volant, ce qui ramènerait la base à zéro alors que l'organisateur a bien
+     * vu et validé ses balises sur la trace.
+     */
+    public function test_la_validation_igc_enregistre_le_total_affiche(): void
+    {
+        $balise = $this->turnpointAt(120);
+        DayAssignment::create([
+            'competition_day_id' => $this->day->id,
+            'pilot_id'           => $this->pilot->id,
+            'participant_id'     => null,       // « ne vole pas », base à 0
+        ]);
+
+        $request = Request::create('/x', 'POST', [
+            'igc_turnpoints' => [$balise->id => ['include' => '1', 'distance_m' => 400]],
+            'bonus_points'   => '20',
+            'total_points'   => '80',
+        ]);
+        app()->instance('request', $request);
+
+        (new IgcValidationController())->save($request, $this->day, $this->pilot);
+
+        $this->assertSame(80, (int) PilotScore::where('pilot_id', $this->pilot->id)
+            ->where('competition_day_id', $this->day->id)
+            ->value('points'));
+    }
     // ─── Robustesse ──────────────────────────────────────────────────────────
 
     public function test_formule_invalide_neutralise_le_score_sans_planter(): void
