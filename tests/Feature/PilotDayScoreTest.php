@@ -2,11 +2,13 @@
 
 namespace Tests\Feature;
 
+use App\Http\Controllers\Admin\CompetitionDayController;
 use App\Models\Competition;
 use App\Models\CompetitionDay;
 use App\Models\DayAssignment;
 use App\Models\Participant;
 use App\Models\Pilot;
+use App\Models\PilotScore;
 use App\Models\PilotTurnpoint;
 use App\Models\Setting;
 use App\Models\Turnpoint;
@@ -240,6 +242,54 @@ class PilotDayScoreTest extends TestCase
         }
 
         $this->assertSame($attendu, $this->score());
+    }
+
+    // ─── Clôture de la journée ───────────────────────────────────────────────
+
+    /**
+     * Un score validé par IGC porte les ajustements de l'épreuve — vache,
+     * bonus — que le recalcul de la clôture ne saurait reproduire.
+     */
+    public function test_la_cloture_preserve_un_score_valide(): void
+    {
+        $this->validate($this->turnpointAt(120));   // vaudrait 30 pts au recalcul
+
+        PilotScore::create([
+            'pilot_id'           => $this->pilot->id,
+            'competition_day_id' => $this->day->id,
+            'points'             => 65,             // 30 ÷ 2 + 50 de bonus
+            'is_validated'       => true,
+            'measured_at'        => now()->subMinute(),
+        ]);
+
+        (new CompetitionDayController())->close($this->day);
+
+        $scores = PilotScore::where('pilot_id', $this->pilot->id)
+            ->where('competition_day_id', $this->day->id)
+            ->get();
+
+        $this->assertCount(1, $scores, 'La clôture ne doit pas empiler une seconde ligne');
+        $this->assertSame(65, (int) $scores->first()->points);
+    }
+
+    public function test_la_cloture_recalcule_un_score_non_valide(): void
+    {
+        $this->validate($this->turnpointAt(120));
+
+        PilotScore::create([
+            'pilot_id'           => $this->pilot->id,
+            'competition_day_id' => $this->day->id,
+            'points'             => 0,
+            'is_validated'       => false,
+            'measured_at'        => now()->subMinute(),
+        ]);
+
+        (new CompetitionDayController())->close($this->day);
+
+        $this->assertSame(30, (int) PilotScore::where('pilot_id', $this->pilot->id)
+            ->where('competition_day_id', $this->day->id)
+            ->orderByDesc('measured_at')
+            ->value('points'));
     }
 
     // ─── Robustesse ──────────────────────────────────────────────────────────

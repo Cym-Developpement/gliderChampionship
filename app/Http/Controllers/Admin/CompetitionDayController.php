@@ -51,18 +51,38 @@ class CompetitionDayController extends Controller
     {
         $competition = $day->competition;
 
-        // Freeze scores: compute final score via ScoringService formula
-        $pilots = Pilot::where('competition_id', $competition->id)->get();
+        // Fige les scores. Deux précautions :
+        //  - un score déjà validé par IGC porte les ajustements de l'épreuve
+        //    (vache, bonus) que le recalcul ne saurait reproduire : on n'y
+        //    touche pas ;
+        //  - on met à jour la ligne existante au lieu d'en créer une nouvelle,
+        //    sans quoi deux clôtures successives empileraient les scores.
+        $pilots    = Pilot::where('competition_id', $competition->id)->get();
+        $preserves = 0;
 
         foreach ($pilots as $pilot) {
+            $existing = PilotScore::where('pilot_id', $pilot->id)
+                ->where('competition_day_id', $day->id)
+                ->orderByDesc('measured_at')
+                ->first();
+
+            if ($existing && $existing->is_validated) {
+                $preserves++;
+                continue;
+            }
+
             $finalPoints = ScoringService::computePilotDayScore($pilot, $competition, $day);
 
-            PilotScore::create([
-                'pilot_id' => $pilot->id,
-                'competition_day_id' => $day->id,
-                'points' => $finalPoints,
-                'measured_at' => now(),
-            ]);
+            if ($existing) {
+                $existing->update(['points' => $finalPoints, 'measured_at' => now()]);
+            } else {
+                PilotScore::create([
+                    'pilot_id'           => $pilot->id,
+                    'competition_day_id' => $day->id,
+                    'points'             => $finalPoints,
+                    'measured_at'        => now(),
+                ]);
+            }
         }
 
         $day->update([
@@ -70,7 +90,12 @@ class CompetitionDayController extends Controller
             'closed_at' => now(),
         ]);
 
-        return redirect()->route('admin.competition.edit')->with('success', "Jour {$day->day_number} clôturé. Scores figés.");
+        $message = "Jour {$day->day_number} clôturé. Scores figés.";
+        if ($preserves > 0) {
+            $message .= " {$preserves} score(s) validé(s) par IGC conservé(s) tels quels.";
+        }
+
+        return redirect()->route('admin.competition.edit')->with('success', $message);
     }
 
     /**
