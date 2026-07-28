@@ -318,6 +318,28 @@ function upsertMarker(p) {
 
 // plus de classement planeurs dans la vue
 
+/**
+ * Balise la plus proche d'une position, dans le seuil d'approche.
+ * Renvoie null au-delà : inutile d'encombrer la liste avec une balise
+ * située à l'autre bout du circuit.
+ */
+function nearestTurnpointFrom(lat, lng) {
+    let best = null;
+    for (const tp of turnpoints) {
+        const distance = haversineDistance(lat, lng, tp.lat, tp.lng);
+        if (distance <= PROXIMITY_FAR_M && (best === null || distance < best.distance)) {
+            best = { name: tp.name, distance };
+        }
+    }
+    return best;
+}
+
+function formatDistance(metres) {
+    return metres < 1000
+        ? `${Math.round(metres)} m`
+        : `${(metres / 1000).toFixed(1)} km`;
+}
+
 function renderPilotRanking(live) {
     const list = document.getElementById('pilotRankingList');
     list.innerHTML = '';
@@ -366,7 +388,7 @@ function renderPilotRanking(live) {
         const avatar = `<img src="${p.photoUrl || BASE + '/pilote-picture.png'}" class="rounded-circle me-2" width="28" height="28" alt="${label}" style="object-fit:cover;"/>`;
         // Récupérer télémétrie via reg -> participantId -> participantIdToLastPos
         const regKey = p.reg ? normalizeReg(p.reg) : '';
-        let alt = null, gs = null, climb = null;
+        let alt = null, gs = null, climb = null, nearTp = null;
         if (regKey) {
             // reconstruire un mapping local reg->pid
             const regToPidLocal = new Map();
@@ -376,7 +398,7 @@ function renderPilotRanking(live) {
             }
             const pid = regToPidLocal.get(regKey);
             const tlm = pid ? participantIdToLastPos.get(pid) : null;
-            if (tlm) { alt = tlm.alt; gs = tlm.gs; climb = tlm.climb; }
+            if (tlm) { alt = tlm.alt; gs = tlm.gs; climb = tlm.climb; nearTp = nearestTurnpointFrom(tlm.lat, tlm.lng); }
         }
         const altClass = (typeof alt === 'number' && alt > 500) ? 'text-bg-primary' : 'text-bg-danger';
         const climbClass = (typeof climb === 'number' && climb > 0) ? 'text-bg-success' : 'text-bg-danger';
@@ -401,7 +423,15 @@ function renderPilotRanking(live) {
         } else {
             rankBadge = `<span class="badge bg-dark me-2">#${rank}</span>`;
         }
-        const left = `<span class="d-flex align-items-center">${rankBadge}${avatar}<span><span class="d-flex align-items-center">${label}${inlineTelemetry}</span><small class="fst-italic text-muted ms-2">${sub}</small></span></span>`;
+        // Balise à proximité : même code couleur que les cercles de la carte,
+        // vert dans le rayon de validation, bleu à l'approche.
+        let nearLine = '';
+        if (nearTp) {
+            const inRange = nearTp.distance <= PROXIMITY_NEAR_M;
+            nearLine = `<small class="d-block ms-2 fw-semibold" style="color:${inRange ? '#28a745' : '#007bff'};">`
+                + `◎ ${nearTp.name} — ${formatDistance(nearTp.distance)}</small>`;
+        }
+        const left = `<span class="d-flex align-items-center">${rankBadge}${avatar}<span><span class="d-flex align-items-center">${label}${inlineTelemetry}</span><small class="fst-italic text-muted ms-2">${sub}</small>${nearLine}</span></span>`;
         const nearClass = pilotsNearTurnpoint.has(p.id) ? ' blink-gold' : '';
         const provisoire = (live.validated === false && p.points > 0)
             ? `<span class="badge text-bg-danger ms-1" style="font-size:0.55rem;letter-spacing:0.5px;">PROV.</span>`
