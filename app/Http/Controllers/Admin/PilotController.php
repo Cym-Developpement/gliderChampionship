@@ -98,8 +98,13 @@ class PilotController extends Controller
         $competitionId = (int) $request->input('competition_id');
         $created = 0;
         $skipped = 0;
+        $updated = 0;
         $invalid = 0;
 
+        // Un même pilote peut figurer plusieurs fois — inscription reprise,
+        // adresse corrigée. La dernière ligne l'emporte, sinon les adresses
+        // basculeraient de l'une à l'autre à chaque import.
+        $unique = [];
         foreach ($rows as $row) {
             $name = CsvImporter::personName($row['prenom'] ?? '', $row['nom'] ?? '');
 
@@ -108,29 +113,51 @@ class PilotController extends Controller
                 continue;
             }
 
-            // Rapprochement insensible à la casse, dans la compétition visée.
-            $exists = Pilot::where('competition_id', $competitionId)
-                ->whereRaw('LOWER(name) = ?', [mb_strtolower($name)])
-                ->exists();
+            $unique[mb_strtolower($name)] = ['name' => $name, 'row' => $row];
+        }
 
-            if ($exists) {
+        $duplicates = count($rows) - $invalid - count($unique);
+
+        foreach ($unique as ['name' => $name, 'row' => $row]) {
+            // Colonne « Email » du fichier d'inscription, indispensable à
+            // l'envoi du récapitulatif de journée.
+            $email = trim($row['email'] ?? '');
+            $email = filter_var($email, FILTER_VALIDATE_EMAIL) ? $email : null;
+
+            // Rapprochement insensible à la casse, dans la compétition visée.
+            $existing = Pilot::where('competition_id', $competitionId)
+                ->whereRaw('LOWER(name) = ?', [mb_strtolower($name)])
+                ->first();
+
+            if ($existing) {
                 $skipped++;
+
+                // La fiche est conservée, mais l'adresse est rafraîchie : un
+                // ré-import est le moyen le plus simple de récupérer les
+                // adresses d'une liste d'inscription mise à jour.
+                if ($email !== null && $existing->email !== $email) {
+                    $existing->update(['email' => $email]);
+                    $updated++;
+                }
+
                 continue;
             }
-
-            $email = trim($row['email'] ?? '');
 
             Pilot::create([
                 'competition_id' => $competitionId,
                 'name'           => $name,
-                // Colonne « Email » du fichier d'inscription, indispensable
-                // à l'envoi du récapitulatif de journée.
-                'email'          => filter_var($email, FILTER_VALIDATE_EMAIL) ? $email : null,
+                'email'          => $email,
             ]);
             $created++;
         }
 
         $message = "Import terminé : {$created} pilote(s) créé(s), {$skipped} déjà présent(s)";
+        if ($updated > 0) {
+            $message .= " dont {$updated} adresse(s) mise(s) à jour";
+        }
+        if ($duplicates > 0) {
+            $message .= ", {$duplicates} ligne(s) en double";
+        }
         $message .= $invalid > 0 ? ", {$invalid} ligne(s) sans nom exploitable." : '.';
 
         return redirect()->route('admin.pilots.index')->with('success', $message);

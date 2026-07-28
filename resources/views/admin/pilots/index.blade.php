@@ -36,7 +36,8 @@
                     Séparateur <code>;</code>, première ligne d'en-tête contenant au moins
                     <code>Nom</code> et <code>Prénom</code> ; les autres colonnes sont ignorées.
                     Le nom est enregistré sous la forme « Prénom Nom ».
-                    Les pilotes déjà présents dans la compétition sont laissés inchangés.
+                    Un pilote déjà présent n'est pas dupliqué ; seule son adresse
+                    e-mail est mise à jour depuis la colonne <code>Email</code>.
                 </div>
             </div>
             <div class="modal-footer">
