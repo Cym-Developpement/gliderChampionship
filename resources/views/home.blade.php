@@ -68,6 +68,10 @@ let PROXIMITY_FAR_M = 2000;   // seuil bleu
 let PROXIMITY_NEAR_M = 1000;  // seuil vert
 let mapViewMode = 'start_radius';
 let mapRadiusKm = null;  // override du rayon (km), null = utilise competition.json
+// map_radius_km = 0 : rayon calculé sur le planeur le plus éloigné du départ.
+let mapRadiusAuto = false;
+let startPoint = null;        // centre de la compétition, pour le calcul auto
+let autoRadiusApplied = null; // dernier rayon appliqué, pour éviter de recadrer sans cesse
 let mapZoom = null;       // override du zoom, null = auto via fitBounds
 
 // Configuration des endpoints API (DB)
@@ -447,6 +451,13 @@ async function loadCompetitionConfig() {
         if (cfg.start && typeof cfg.start.lat === 'number' && typeof cfg.start.lng === 'number') {
             const radiusKm = mapRadiusKm || (typeof cfg.start.radiusKm === 'number' ? cfg.start.radiusKm : 30);
             const lat = cfg.start.lat; const lng = cfg.start.lng;
+            // Mémorisé pour le rayon automatique, calculé une fois les
+            // positions connues.
+            startPoint = {
+                lat, lng,
+                text: (cfg.start.name ? `${cfg.start.name} — ` : '')
+                    + `Point de départ: ${lat.toFixed(4)}, ${lng.toFixed(4)} • `,
+            };
             if (mapViewMode === 'start_radius') {
                 if (mapZoom) {
                     map.setView([lat, lng], mapZoom);
@@ -561,6 +572,7 @@ async function loadOgnPositions() {
     if (mapViewMode === 'fit_participants' && matchedPositions.length > 0) {
         map.fitBounds(L.latLngBounds(matchedPositions).pad(0.1));
     }
+    applyAutoRadius();
     // Mettre à jour les alertes de proximité turnpoint
     updateProximityAlerts();
     // Ne pas recentrer/zoomer automatiquement sur les marqueurs OGN
@@ -625,6 +637,46 @@ async function loadTurnpoints() {
     }
 }
 
+/**
+ * Rayon automatique : cadre sur le planeur le plus éloigné du départ.
+ *
+ * Recalculé à chaque relevé de positions, mais le recadrage n'est appliqué
+ * qu'au-delà de 10 % de variation — sinon la carte bougerait en continu au
+ * gré des allers-retours des planeurs.
+ */
+function applyAutoRadius() {
+    if (!mapRadiusAuto || !startPoint || mapZoom) return;
+
+    let maxKm = 0;
+    for (const pos of participantIdToLastPos.values()) {
+        const km = haversineDistance(startPoint.lat, startPoint.lng, pos.lat, pos.lng) / 1000;
+        if (km > maxKm) maxKm = km;
+    }
+
+    if (maxKm === 0) return;   // aucun planeur en vol : on garde le cadrage courant
+
+    // Marge de 15 % pour ne pas coller les planeurs au bord, et plancher à
+    // 5 km pour éviter un zoom sur le terrain quand tous sont au départ.
+    const radiusKm = Math.max(5, maxKm * 1.15);
+
+    if (autoRadiusApplied !== null && Math.abs(radiusKm - autoRadiusApplied) / autoRadiusApplied < 0.1) {
+        return;
+    }
+    autoRadiusApplied = radiusKm;
+
+    const dLat = radiusKm / 111.32;
+    const dLng = radiusKm / (111.32 * Math.cos(startPoint.lat * Math.PI / 180));
+    map.fitBounds(L.latLngBounds(
+        L.latLng(startPoint.lat - dLat, startPoint.lng - dLng),
+        L.latLng(startPoint.lat + dLat, startPoint.lng + dLng)
+    ).pad(-0.1));
+
+    const label = document.getElementById('compSub');
+    if (label && startPoint.text) {
+        label.textContent = `${startPoint.text}Rayon ${radiusKm.toFixed(1)} km (auto)`;
+    }
+}
+
 async function loadSettings() {
     try {
         const res = await fetch(SETTINGS_URL, { cache: 'no-store' });
@@ -634,7 +686,15 @@ async function loadSettings() {
         if (s.proximity_far_m) PROXIMITY_FAR_M = parseInt(s.proximity_far_m, 10);
         if (s.proximity_near_m) PROXIMITY_NEAR_M = parseInt(s.proximity_near_m, 10);
         if (s.map_view_mode) mapViewMode = s.map_view_mode;
-        if (s.map_radius_km) mapRadiusKm = parseFloat(s.map_radius_km);
+        // Test d'existence et non de vérité : 0 est une valeur significative,
+        // elle demande le calcul automatique du rayon.
+        if (s.map_radius_km !== undefined && s.map_radius_km !== '') {
+            const radius = parseFloat(s.map_radius_km);
+            if (!Number.isNaN(radius)) {
+                mapRadiusAuto = radius === 0;
+                mapRadiusKm = mapRadiusAuto ? null : radius;
+            }
+        }
         if (s.map_zoom) mapZoom = parseInt(s.map_zoom, 10);
     } catch (e) {
         console.warn('settings non chargés', e);
