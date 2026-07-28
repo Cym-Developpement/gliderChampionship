@@ -61,10 +61,7 @@ class CompetitionDayController extends Controller
         $preserves = 0;
 
         foreach ($pilots as $pilot) {
-            $existing = PilotScore::where('pilot_id', $pilot->id)
-                ->where('competition_day_id', $day->id)
-                ->orderByDesc('measured_at')
-                ->first();
+            $existing = PilotScore::consolidate($pilot->id, $day->id);
 
             if ($existing && $existing->is_validated) {
                 $preserves++;
@@ -201,9 +198,7 @@ class CompetitionDayController extends Controller
         foreach ($data['scores'] as $i => $entry) {
             $isValidated = isset($request->input('scores')[$i]['is_validated']);
 
-            $existing = PilotScore::where('pilot_id', $entry['pilot_id'])
-                ->where('competition_day_id', $day->id)
-                ->first();
+            $existing = PilotScore::consolidate((int) $entry['pilot_id'], $day->id);
 
             if ($existing) {
                 $existing->update([

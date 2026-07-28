@@ -217,11 +217,8 @@ class IgcValidationController extends Controller
             $detail .= ' + ' . $bonus . ' bonus';
         }
 
-        // La plus récente : d'anciennes clôtures ont pu laisser des doublons.
-        $existing = PilotScore::where('pilot_id', $pilot->id)
-            ->where('competition_day_id', $day->id)
-            ->orderByDesc('measured_at')
-            ->first();
+        // Consolide : d'anciennes clôtures ont pu laisser des doublons.
+        $existing = PilotScore::consolidate($pilot->id, $day->id);
 
         if ($existing) {
             $existing->update(['points' => $score, 'is_validated' => true]);

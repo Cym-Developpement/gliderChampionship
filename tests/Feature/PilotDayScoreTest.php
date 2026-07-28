@@ -324,6 +324,39 @@ class PilotDayScoreTest extends TestCase
             ->where('competition_day_id', $this->day->id)
             ->value('points'));
     }
+    /**
+     * D'anciennes clôtures répétées ont laissé plusieurs lignes de score. Les
+     * lecteurs prenaient la plus récente, updateScores la première venue : la
+     * validation cochée s'appliquait à une ligne invisible et semblait se
+     * défaire d'elle-même à l'affichage.
+     */
+    public function test_la_validation_survit_a_des_scores_en_double(): void
+    {
+        foreach ([[100, '-2 hours'], [200, 'now']] as [$points, $quand]) {
+            PilotScore::create([
+                'pilot_id'           => $this->pilot->id,
+                'competition_day_id' => $this->day->id,
+                'points'             => $points,
+                'is_validated'       => false,
+                'measured_at'        => new \DateTime($quand),
+            ]);
+        }
+
+        $controller = new CompetitionDayController();
+        $request = Request::create('/x', 'POST', [
+            'scores' => [['pilot_id' => $this->pilot->id, 'points' => '200', 'is_validated' => '1']],
+        ]);
+        app()->instance('request', $request);
+
+        $controller->updateScores($request, $this->day);
+
+        $scores = PilotScore::where('pilot_id', $this->pilot->id)
+            ->where('competition_day_id', $this->day->id)
+            ->get();
+
+        $this->assertCount(1, $scores, 'Les doublons doivent être résorbés');
+        $this->assertTrue((bool) $scores->first()->is_validated);
+    }
     // ─── Robustesse ──────────────────────────────────────────────────────────
 
     public function test_formule_invalide_neutralise_le_score_sans_planter(): void
