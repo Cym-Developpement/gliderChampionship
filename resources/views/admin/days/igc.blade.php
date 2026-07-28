@@ -162,10 +162,12 @@
                         $flarmOk    = $r['flarm'];
                         $igcOk      = $r['igc'];
                         $distM      = $r['distance_m'];
-                        // Validée par l'IGC, sauf si franchie après la vache :
-                        // le vol était alors terminé.
+                        // Validée par l'IGC, sauf si franchie après la vache —
+                        // le vol était alors terminé — ou déjà acquise un
+                        // autre jour, le règlement interdisant de la recompter.
                         $afterVache    = $r['after_vache'] ?? false;
-                        $shouldInclude = $igcOk && !$afterVache;
+                        $alreadyDay    = $r['already_day'] ?? null;
+                        $shouldInclude = $igcOk && !$afterVache && !$alreadyDay;
                         $rowClass = match(true) {
                             $igcOk && $flarmOk  => '',
                             $igcOk && !$flarmOk => 'table-success',
@@ -180,11 +182,24 @@
                             @if($afterVache)
                                 <span class="badge bg-danger ms-1" title="Franchie après la vache">après vache</span>
                             @endif
+                            @if($alreadyDay)
+                                <span class="badge bg-secondary ms-1"
+                                      title="Déjà validée au jour {{ $alreadyDay }} — le règlement interdit de la compter deux fois">
+                                    déjà acquise J{{ $alreadyDay }}
+                                </span>
+                            @endif
                         </td>
-                        <td class="text-end fw-semibold" data-points="{{ $r['points'] }}">
-                            {{ $r['points'] }}
-                            @if($tp->points)
-                                <span class="text-muted small d-block">balise {{ $tp->points }}</span>
+                        {{-- Une balise déjà acquise ne rapporte rien : sa valeur
+                             est barrée et exclue du total. --}}
+                        <td class="text-end fw-semibold" data-points="{{ $alreadyDay ? 0 : $r['points'] }}">
+                            @if($alreadyDay)
+                                <span class="text-decoration-line-through text-muted">{{ $r['points'] }}</span>
+                                <span class="d-block text-muted small">0 pt</span>
+                            @else
+                                {{ $r['points'] }}
+                                @if($tp->points)
+                                    <span class="text-muted small d-block">balise {{ $tp->points }}</span>
+                                @endif
                             @endif
                         </td>
                         <td class="text-end text-muted">{{ number_format($tp->validationRadiusM()) }} m</td>
@@ -241,7 +256,11 @@
 
                         {{-- Include checkbox --}}
                         <td class="text-center">
-                            @if($igcOk)
+                            @if($alreadyDay)
+                                {{-- Verrouillée : la recompter contredirait le
+                                     règlement de validation unique. --}}
+                                <span class="text-muted small">acquise</span>
+                            @elseif($igcOk)
                                 <input type="hidden" name="igc_turnpoints[{{ $tp->id }}][distance_m]" value="{{ $distM }}">
                                 <div class="form-check d-flex justify-content-center mb-0">
                                     <input class="form-check-input"

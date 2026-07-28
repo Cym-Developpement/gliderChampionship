@@ -98,6 +98,8 @@ class IgcValidationController extends Controller
             (int) (Setting::get('vache_height_m', $comp->id) ?? 200)
         );
 
+        $alreadyValidated = $this->turnpointsValidatedOnOtherDays($pilot, $day, $comp->id);
+
         // For each turnpoint: use passedNearPoint() from the library
         $results = [];
         foreach ($turnpoints as $tp) {
@@ -131,6 +133,9 @@ class IgcValidationController extends Controller
                 'after_vache'    => $altitudes['vache_at'] !== null
                     && $validatedAt !== null
                     && strtotime((string) $validatedAt) > strtotime($altitudes['vache_at']),
+                // Journée où la balise a déjà été validée, si le règlement
+                // interdit de la compter deux fois.
+                'already_day'    => $alreadyValidated[$tp->id] ?? null,
             ];
         }
 
@@ -242,6 +247,32 @@ class IgcValidationController extends Controller
         return redirect()
             ->route('admin.days.scores', $day)
             ->with('success', "IGC validé — {$pilot->name} : {$score} pts ({$detail}). Score marqué comme validé.");
+    }
+
+    /**
+     * Balises que ce pilote a déjà validées lors d'une autre journée.
+     *
+     * N'a de sens que si le règlement interdit de compter deux fois la même
+     * balise : sans ce réglage, chaque journée repart de zéro et une nouvelle
+     * validation est parfaitement légitime.
+     *
+     * @return array<int, int> turnpoint_id => numéro de la journée
+     */
+    private function turnpointsValidatedOnOtherDays(Pilot $pilot, CompetitionDay $day, int $competitionId): array
+    {
+        if ((Setting::get('turnpoint_unique_validation', $competitionId) ?? '0') !== '1') {
+            return [];
+        }
+
+        return PilotTurnpoint::where('pilot_id', $pilot->id)
+            ->where('competition_day_id', '!=', $day->id)
+            ->with('competitionDay')
+            ->get()
+            ->mapWithKeys(fn ($row) => [
+                $row->turnpoint_id => $row->competitionDay?->day_number,
+            ])
+            ->filter()
+            ->all();
     }
 
     /**
