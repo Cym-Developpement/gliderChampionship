@@ -384,10 +384,15 @@ async function loadPodium() {
     const sortedDays = [...allDayNums].sort((a, b) => a - b);
     const lastDay = sortedDays[sortedDays.length - 1] ?? null;
 
-    // Check if the last day is validated (all pilots must have is_validated=true)
-    const isDayValidated = lastDay !== null && (data.pilots || []).every(
-        p => (p.dayValidated || {})[lastDay] === true
+    // Journée validée quand tous les pilotes ayant marqué des points le sont.
+    // Les pilotes à zéro n'ont pas de trace à contrôler : les inclure
+    // laisserait la mention « provisoire » indéfiniment.
+    const scoredPilots = (data.pilots || []).filter(
+        p => ((p.dayScores || {})[lastDay] ?? 0) > 0
     );
+    const isDayValidated = lastDay !== null
+        && scoredPilots.length > 0
+        && scoredPilots.every(p => (p.dayValidated || {})[lastDay] === true);
 
     if (lastDay !== null) {
         document.getElementById('pageTitle').textContent = `Podium — Jour ${lastDay}`;

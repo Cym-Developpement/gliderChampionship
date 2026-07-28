@@ -392,10 +392,14 @@ async function loadPodium() {
     (data.pilots || []).forEach(p => Object.keys(p.dayScores || {}).forEach(d => allDayNums.add(Number(d))));
     const sortedDays = [...allDayNums].sort((a, b) => a - b);
 
-    // Per-day validation: a day is validated only if ALL pilots have is_validated=true for that day
+    // Journée validée quand tous les pilotes ayant marqué des points le sont.
+    // Les pilotes à zéro n'ont pas de trace à contrôler : les inclure
+    // laisserait la mention « provisoire » indéfiniment.
     const dayIsValidated = {};
     sortedDays.forEach(d => {
-        dayIsValidated[d] = (data.pilots || []).every(p => (p.dayValidated || {})[d] === true);
+        const scored = (data.pilots || []).filter(p => ((p.dayScores || {})[d] ?? 0) > 0);
+        dayIsValidated[d] = scored.length > 0
+            && scored.every(p => (p.dayValidated || {})[d] === true);
     });
     const anyProvisional = sortedDays.some(d => !dayIsValidated[d]);
 
