@@ -162,9 +162,20 @@ class ApiController extends Controller
             // Compute scores via ScoringService for each pilot
             $pilots = Pilot::where('competition_id', $comp->id)->get();
 
+            // Scores validés par IGC : ils remplacent le calcul live, sans quoi
+            // la carte afficherait encore la valeur d'avant vérification.
+            $validated = PilotScore::where('competition_day_id', $activeDay->id)
+                ->where('is_validated', true)
+                ->orderBy('measured_at')
+                ->pluck('points', 'pilot_id')
+                ->toArray();
+
             $points = [];
             foreach ($pilots as $pilot) {
-                $score = ScoringService::computePilotDayScore($pilot, $comp, $activeDay);
+                $score = array_key_exists($pilot->id, $validated)
+                    ? (int) $validated[$pilot->id]
+                    : ScoringService::computePilotDayScore($pilot, $comp, $activeDay);
+
                 if ($score > 0) {
                     $points[(string) $pilot->id] = $score;
                 }
@@ -173,7 +184,9 @@ class ApiController extends Controller
             return response()->json([
                 'updatedAt' => now()->toISOString(),
                 'points'    => (object) $points,
-                'validated' => false, // FLARM scores are always provisional
+                // Provisoire tant que tous les pilotes n'ont pas été vérifiés.
+                'validated' => $pilots->isNotEmpty()
+                    && count($validated) >= $pilots->count(),
             ]);
         }
 
@@ -285,6 +298,7 @@ class ApiController extends Controller
 
         // Get live scores for active day via ScoringService
         $liveScores = [];
+        $validatedScores = [];
         if ($activeDay) {
             foreach ($pilots as $pilot) {
                 $score = ScoringService::computePilotDayScore($pilot, $comp, $activeDay);
@@ -292,6 +306,15 @@ class ApiController extends Controller
                     $liveScores[$pilot->id] = $score;
                 }
             }
+
+            // Un score validé par IGC prime sur le calcul live, y compris avant
+            // la clôture : il porte les arbitrages de l'organisateur, que le
+            // recalcul ne saurait reproduire.
+            $validatedScores = PilotScore::where('competition_day_id', $activeDay->id)
+                ->where('is_validated', true)
+                ->orderBy('measured_at')
+                ->pluck('points', 'pilot_id')
+                ->toArray();
         }
 
         $result = [];
@@ -312,12 +335,18 @@ class ApiController extends Controller
                 $total += $pts;
             }
 
-            // Active day live score — always provisional (FLARM-based)
+            // Journée active : le score validé fait foi s'il existe, sinon le
+            // calcul live, qui reste provisoire tant que la trace n'a pas été
+            // vérifiée.
             if ($activeDay) {
-                $livePts = $liveScores[$pilot->id] ?? 0;
-                $dayScores[$activeDay->day_number] = $livePts;
-                $dayValidated[$activeDay->day_number] = false;
-                $total += $livePts;
+                $isValidated = array_key_exists($pilot->id, $validatedScores);
+                $pts = $isValidated
+                    ? (int) $validatedScores[$pilot->id]
+                    : ($liveScores[$pilot->id] ?? 0);
+
+                $dayScores[$activeDay->day_number]    = $pts;
+                $dayValidated[$activeDay->day_number] = $isValidated;
+                $total += $pts;
             }
 
             $result[] = [
