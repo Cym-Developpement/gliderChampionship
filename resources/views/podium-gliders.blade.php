@@ -74,35 +74,6 @@
             max-width: 260px;
         }
 
-        /* Médaille SVG */
-        .medal-wrap {
-            position: relative;
-            width: 100%;
-            display: flex;
-            justify-content: center;
-            margin-bottom: -8px;
-            z-index: 2;
-        }
-
-        .medal-wrap svg {
-            width: 100%;
-            max-width: 200px;
-            filter: drop-shadow(0 8px 24px rgba(0,0,0,0.5));
-            transition: transform 0.3s ease;
-        }
-
-        .podium-slot:hover .medal-wrap svg {
-            transform: translateY(-6px) scale(1.04);
-        }
-
-        /* Photo pilote dans la médaille */
-        .pilot-photo {
-            position: absolute;
-            border-radius: 50%;
-            object-fit: cover;
-            border: 3px solid rgba(255,255,255,0.3);
-        }
-
         /* Marche du podium */
         .step {
             width: 100%;
@@ -340,40 +311,6 @@
 // L'application peut être servie dans un sous-répertoire : les URL sont
 // préfixées par la base calculée par Laravel plutôt que par « / ».
 const BASE = @json(rtrim(url('/'), '/'));
-// SVG médaille selon rang
-function medalSvg(rank) {
-    const sizes  = { 1: 160, 2: 130, 3: 105 };
-    const rings  = { 1: '#F5C200', 2: '#C0C0C0', 3: '#CD7F32' };
-    const darks  = { 1: '#C9960C', 2: '#888888', 3: '#8B5010' };
-    const sz = sizes[rank];
-    const cx = sz / 2;
-    const rOuter = cx - 4;
-    const rInner = rOuter - 10;
-    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${sz} ${sz}" width="${sz}" height="${sz}">
-  <defs>
-    <clipPath id="clip${rank}"><circle cx="${cx}" cy="${cx}" r="${rInner - 2}"/></clipPath>
-  </defs>
-  <circle cx="${cx}" cy="${cx}" r="${rOuter}" fill="${rings[rank]}" stroke="${darks[rank]}" stroke-width="4"/>
-  <circle cx="${cx}" cy="${cx}" r="${rInner}" fill="#B0B8C4"/>
-  <ellipse cx="${cx}" cy="${cx + rInner * 0.38}" rx="${rInner * 0.42}" ry="${rInner * 0.55}" fill="#8A9BAA" id="sil-body-${rank}"/>
-  <circle  cx="${cx}" cy="${cx - rInner * 0.25}" r="${rInner * 0.32}" fill="#8A9BAA" id="sil-head-${rank}"/>
-  <image id="photo-${rank}" href="" x="${cx - rInner + 2}" y="${cx - rInner + 2}"
-         width="${(rInner - 2) * 2}" height="${(rInner - 2) * 2}"
-         clip-path="url(#clip${rank})" preserveAspectRatio="xMidYMid slice" style="display:none"/>
-</svg>`;
-}
-
-function setPhoto(rank, url) {
-    const img = document.getElementById(`photo-${rank}`);
-    const head = document.getElementById(`sil-head-${rank}`);
-    const body = document.getElementById(`sil-body-${rank}`);
-    if (!img || !url) return;
-    img.setAttribute('href', url);
-    img.style.display = '';
-    if (head) head.style.display = 'none';
-    if (body) body.style.display = 'none';
-}
-
 async function loadPodium() {
     try {
         const res = await fetch(BASE + '/api/competition', { cache: 'no-store' });
@@ -429,11 +366,8 @@ async function loadPodium() {
         const slot = document.createElement('div');
         slot.className = 'podium-slot';
 
-        const medalWrap = document.createElement('div');
-        medalWrap.className = 'medal-wrap';
-        medalWrap.innerHTML = medalSvg(rank);
-        slot.appendChild(medalWrap);
-
+        // Pas de médaille ici : elle porte une silhouette de pilote, sans
+        // objet pour un classement de machines.
         const step = document.createElement('div');
         step.className = `step ${stepClasses[rank]}`;
 
@@ -453,7 +387,6 @@ async function loadPodium() {
                 <div class="rank-number">#${rank}</div>
                 <div class="pilot-name">${pilot.reg ?? '—'}</div>
                 <div class="pilot-callsign">${[pilot.gliderBrand, pilot.gliderModel].filter(Boolean).join(' ')}</div>
-                ${(pilot.pilots || []).length ? `<div class="pilot-callsign" style="opacity:.75">${pilot.pilots.join(' · ')}</div>` : ''}
                 <div class="pilot-score">${pilot.total.toLocaleString('fr-FR')}</div>
                 <div class="pilot-score-label">pts au total</div>
                 ${breakdown ? `<div class="pilot-day-breakdown">${breakdown}</div>` : ''}
@@ -508,7 +441,6 @@ async function loadPodium() {
                     <td>
                         <div style="font-weight:600;color:#fff;">${p.reg ?? '—'}</div>
                         <div style="font-size:0.68rem;color:rgba(255,255,255,0.35);letter-spacing:1px;">${[p.gliderBrand, p.gliderModel].filter(Boolean).join(' ')}</div>
-                        ${(p.pilots || []).length ? `<div style="font-size:0.62rem;color:rgba(255,255,255,0.3);">${p.pilots.join(' · ')}</div>` : ''}
                     </td>
                     ${dayScores}
                     <td class="total-cell">${p.total.toLocaleString('fr-FR')}</td>
