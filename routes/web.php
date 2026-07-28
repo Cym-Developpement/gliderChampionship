@@ -27,6 +27,10 @@ Route::get('/podium-general', function () {
     return view('podium-general');
 });
 
+Route::get('/podium-gliders', function () {
+    return view('podium-gliders');
+});
+
 Route::get('/podium-display', function () {
     return view('podium-display');
 });
@@ -98,6 +102,7 @@ Route::get('/api/live', [\App\Http\Controllers\ApiController::class, 'live']);
 Route::get('/api/pilots', [\App\Http\Controllers\ApiController::class, 'pilots']);
 Route::get('/api/live-pilots', [\App\Http\Controllers\ApiController::class, 'livePilots']);
 Route::get('/api/general-ranking', [\App\Http\Controllers\ApiController::class, 'generalRanking']);
+Route::get('/api/glider-ranking', [\App\Http\Controllers\ApiController::class, 'gliderRanking']);
 Route::get('/api/turnpoints', [\App\Http\Controllers\ApiController::class, 'turnpoints']);
 Route::get('/api/settings', [\App\Http\Controllers\ApiController::class, 'settings']);
 Route::post('/api/validate-turnpoint', [\App\Http\Controllers\ApiController::class, 'validateTurnpoint']);

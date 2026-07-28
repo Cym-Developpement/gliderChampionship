@@ -113,6 +113,9 @@
     <div class="slide" id="slide-general">
         <iframe src="{{ url('/podium-general') }}" scrolling="no"></iframe>
     </div>
+    <div class="slide" id="slide-gliders">
+        <iframe src="{{ url('/podium-gliders') }}" scrolling="no"></iframe>
+    </div>
 </div>
 
 <div id="hud">
@@ -121,6 +124,8 @@
         <span id="lbl-day" class="lbl active">Journée</span>
         <span class="lbl-separator"></span>
         <span id="lbl-general" class="lbl">Général</span>
+        <span class="lbl-separator"></span>
+        <span id="lbl-gliders" class="lbl">Planeurs</span>
     </div>
 </div>
 
@@ -128,7 +133,7 @@
     const SLIDE_DURATION = 20000; // 20 seconds per slide
     const FADE_DURATION  = 800;   // must match CSS transition: opacity 0.8s
 
-    const slides = ['day', 'general'];
+    const slides = ['day', 'general', 'gliders'];
     let current  = 0;
     let startTime = null;
     let rafId = null;

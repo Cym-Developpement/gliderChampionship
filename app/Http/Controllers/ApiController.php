@@ -285,20 +285,25 @@ class ApiController extends Controller
         return response()->json(['validated' => $validated]);
     }
 
-    public function generalRanking()
+    /**
+     * Score de chaque pilote pour chaque journée comptabilisée.
+     *
+     * Mutualisé entre le classement général et le classement par planeur : les
+     * deux doivent additionner exactement les mêmes points.
+     *
+     * @return array{
+     *   days: \Illuminate\Support\Collection,
+     *   scores: array<int, array<int, array{points: int, validated: bool}>>
+     * }
+     */
+    private function scoreMatrix(Competition $comp, $pilots): array
     {
-        $comp = Competition::latest('id')->first();
-        if (!$comp) {
-            return response()->json(['pilots' => []]);
-        }
-
-        $pilots = Pilot::where('competition_id', $comp->id)->with('participants')->get();
         $closedDays = $comp->days()->where('status', 'closed')->orderBy('day_number')->get();
-        $activeDay = $comp->activeDay();
+        $activeDay  = $comp->activeDay();
 
-        // Get live scores for active day via ScoringService
-        $liveScores = [];
+        $liveScores      = [];
         $validatedScores = [];
+
         if ($activeDay) {
             foreach ($pilots as $pilot) {
                 $score = ScoringService::computePilotDayScore($pilot, $comp, $activeDay);
@@ -317,22 +322,18 @@ class ApiController extends Controller
                 ->toArray();
         }
 
-        $result = [];
+        $scores = [];
         foreach ($pilots as $pilot) {
-            $dayScores = [];
-            $dayValidated = [];
-            $total = 0;
-
-            // Frozen scores from closed days
             foreach ($closedDays as $day) {
-                $frozenScore = PilotScore::where('pilot_id', $pilot->id)
+                $frozen = PilotScore::where('pilot_id', $pilot->id)
                     ->where('competition_day_id', $day->id)
                     ->orderByDesc('measured_at')
                     ->first();
-                $pts = $frozenScore ? (int) $frozenScore->points : 0;
-                $dayScores[$day->day_number] = $pts;
-                $dayValidated[$day->day_number] = $frozenScore ? (bool) $frozenScore->is_validated : false;
-                $total += $pts;
+
+                $scores[$pilot->id][$day->id] = [
+                    'points'    => $frozen ? (int) $frozen->points : 0,
+                    'validated' => $frozen ? (bool) $frozen->is_validated : false,
+                ];
             }
 
             // Journée active : le score validé fait foi s'il existe, sinon le
@@ -340,13 +341,112 @@ class ApiController extends Controller
             // vérifiée.
             if ($activeDay) {
                 $isValidated = array_key_exists($pilot->id, $validatedScores);
-                $pts = $isValidated
-                    ? (int) $validatedScores[$pilot->id]
-                    : ($liveScores[$pilot->id] ?? 0);
 
-                $dayScores[$activeDay->day_number]    = $pts;
-                $dayValidated[$activeDay->day_number] = $isValidated;
-                $total += $pts;
+                $scores[$pilot->id][$activeDay->id] = [
+                    'points' => $isValidated
+                        ? (int) $validatedScores[$pilot->id]
+                        : ($liveScores[$pilot->id] ?? 0),
+                    'validated' => $isValidated,
+                ];
+            }
+        }
+
+        $days = $activeDay ? $closedDays->concat([$activeDay]) : $closedDays;
+
+        return ['days' => $days, 'scores' => $scores];
+    }
+
+    /**
+     * Classement par planeur : les points de chaque journée sont attribués à
+     * la machine effectivement utilisée ce jour-là, quel que soit le pilote.
+     *
+     * Un planeur changeant de pilote d'un jour à l'autre cumule donc les deux,
+     * et un biplace additionne ceux de son équipage.
+     */
+    public function gliderRanking()
+    {
+        $comp = Competition::latest('id')->first();
+        if (!$comp) {
+            return response()->json(['gliders' => []]);
+        }
+
+        $pilots = Pilot::where('competition_id', $comp->id)->with('participants')->get();
+        ['days' => $days, 'scores' => $scores] = $this->scoreMatrix($comp, $pilots);
+
+        $gliders = [];
+
+        foreach ($days as $day) {
+            foreach ($pilots as $pilot) {
+                $glider = $pilot->participantForDay($day, $comp->id);
+                if (!$glider) {
+                    continue;   // pilote sans machine ce jour-là
+                }
+
+                $entry = $scores[$pilot->id][$day->id] ?? ['points' => 0, 'validated' => false];
+
+                $gliders[$glider->id] ??= [
+                    'id'           => $glider->id,
+                    'reg'          => $glider->reg,
+                    'gliderBrand'  => $glider->glider_brand,
+                    'gliderModel'  => $glider->glider_model,
+                    'handicap'     => (float) $glider->handicap,
+                    'dayScores'    => [],
+                    'dayValidated' => [],
+                    'pilots'       => [],
+                    'total'        => 0,
+                ];
+
+                $number = $day->day_number;
+                $gliders[$glider->id]['dayScores'][$number] =
+                    ($gliders[$glider->id]['dayScores'][$number] ?? 0) + $entry['points'];
+
+                // Une journée n'est validée pour le planeur que si tous ses
+                // pilotes le sont : un seul contrôle manquant la rend
+                // provisoire.
+                $gliders[$glider->id]['dayValidated'][$number] =
+                    ($gliders[$glider->id]['dayValidated'][$number] ?? true) && $entry['validated'];
+
+                $gliders[$glider->id]['total'] += $entry['points'];
+
+                if (!in_array($pilot->name, $gliders[$glider->id]['pilots'], true)) {
+                    $gliders[$glider->id]['pilots'][] = $pilot->name;
+                }
+            }
+        }
+
+        $gliders = array_values($gliders);
+        usort($gliders, fn ($a, $b) => $b['total'] <=> $a['total']);
+
+        // Cast en objet pour que les journées restent des clés en JSON.
+        foreach ($gliders as &$glider) {
+            $glider['dayScores']    = (object) $glider['dayScores'];
+            $glider['dayValidated'] = (object) $glider['dayValidated'];
+        }
+
+        return response()->json(['gliders' => $gliders]);
+    }
+
+    public function generalRanking()
+    {
+        $comp = Competition::latest('id')->first();
+        if (!$comp) {
+            return response()->json(['pilots' => []]);
+        }
+
+        $pilots = Pilot::where('competition_id', $comp->id)->with('participants')->get();
+        ['days' => $days, 'scores' => $scores] = $this->scoreMatrix($comp, $pilots);
+
+        $result = [];
+        foreach ($pilots as $pilot) {
+            $dayScores = [];
+            $dayValidated = [];
+            $total = 0;
+
+            foreach ($days as $day) {
+                $entry = $scores[$pilot->id][$day->id] ?? ['points' => 0, 'validated' => false];
+                $dayScores[$day->day_number]    = $entry['points'];
+                $dayValidated[$day->day_number] = $entry['validated'];
+                $total += $entry['points'];
             }
 
             $result[] = [
