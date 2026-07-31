@@ -54,7 +54,7 @@ class IgcValidationController extends Controller
 
         // Parse via library (filter unknown record types first for robustness)
         $rawContent     = Storage::get($path);
-        $filteredContent = $this->filterKnownRecords($rawContent);
+        $filteredContent = $this->normaliseRecords($rawContent);
 
         try {
             $inspector = new PhpIgcInspector($filteredContent);
@@ -356,16 +356,47 @@ class IgcValidationController extends Controller
     // ─── Helpers ──────────────────────────────────────────────────────────────
 
     /**
-     * Strip lines with unknown record types so the library doesn't throw
-     * on proprietary extensions (e.g. LXWP, X...).
+     * Met la trace en forme avant analyse.
+     *
+     * Trois corrections, toutes nécessaires pour que la bibliothèque lise le
+     * fichier tel que l'enregistreur l'a écrit :
+     *
+     * 1. Les types d'enregistrement inconnus sont retirés, sinon les extensions
+     *    propriétaires (LXWP, X...) font échouer le parsing.
+     * 2. L'en-tête de date au format IGC 2016 (HFDTEDATE:290726,01) est ramené
+     *    à l'ancien HFDTE290726, seul reconnu par la bibliothèque. Sans cela la
+     *    trace prend la date du jour et les heures de validation sont fausses.
+     * 3. Les points marqués « V » sont écartés : le récepteur n'avait pas de
+     *    position 3D et écrit souvent 0°N 0°E. Un tel point est à 5 000 km du
+     *    suivant, ce que le filtre anti-aberration de la bibliothèque interprète
+     *    comme une vitesse impossible — il rejette alors le point suivant, puis
+     *    tous les autres, qu'il continue de comparer au même point resté en
+     *    place. Une trace entière peut ainsi se réduire à un seul fix.
      */
-    private function filterKnownRecords(string $content): string
+    private function normaliseRecords(string $content): string
     {
         $lines = explode("\n", $content);
-        $kept  = array_filter($lines, function (string $line): bool {
-            $line = ltrim($line, "\r");
-            return $line !== '' && in_array($line[0], self::KNOWN_RECORD_TYPES, true);
-        });
+        $kept  = [];
+
+        foreach ($lines as $line) {
+            $line = rtrim($line, "\r");
+
+            if ($line === '' || !in_array($line[0], self::KNOWN_RECORD_TYPES, true)) {
+                continue;
+            }
+
+            if (preg_match('/^HFDTEDATE:(\d{6})/', $line, $m)) {
+                $kept[] = 'HFDTE' . $m[1];
+                continue;
+            }
+
+            if (preg_match('/^B\d{6}\d{7}[NS]\d{8}[EW]V/', $line)) {
+                continue;
+            }
+
+            $kept[] = $line;
+        }
+
         return implode("\n", $kept);
     }
 }
